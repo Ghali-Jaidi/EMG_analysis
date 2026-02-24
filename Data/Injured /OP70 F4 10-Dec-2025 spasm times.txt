@@ -1,0 +1,2 @@
+Spasm 1: 66 to 69.4 s
+Spasm 2: 87 to 89.43 s

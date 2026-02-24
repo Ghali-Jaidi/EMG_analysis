@@ -1,0 +1,173 @@
+fs = 10000; % 10 kHz sampling rate
+plot_rectified_env = false;
+
+%% ---- Align channels (truncate to shortest; no extrapolation) ----
+N1 = numel(data__chan_1_rec_1);
+N2 = numel(data__chan_2_rec_4);
+N3 = numel(data__chan_3_rec_4);
+N  = min([N1 N2 N3]);
+y1 = data__chan_1_rec_4(1:N);
+y2 = data__chan_2_rec_4(1:N);
+y3 = data__chan_3_rec_4(1:N);
+
+%% ---- Build a timetable so time stays attached to samples ----
+tDur = seconds((0:N-1)'/fs);
+TT = timetable(tDur, y1, y2, y3, 'VariableNames', {'TA_raw','MG_raw','Ch3_raw'});
+
+%% ---- Robust scaling (DC handled via median subtraction) ----
+scale = @(v) (v - median(v)) / (mad(v,1) + eps);
+TT.TA  = scale(TT.TA_raw);
+TT.MG  = scale(TT.MG_raw);
+TT.Ch3 = TT.Ch3_raw;
+
+%% ---- Apply filters (EMG only) ----
+TT.TA_f = notch_filter(butter_filter(TT.TA));
+TT.MG_f = notch_filter(butter_filter(TT.MG));
+
+%% ---- Plot filtered EMG + channel 3 ----
+t = seconds(TT.tDur);
+plot_filtered(TT.TA_f, TT.MG_f, TT.Ch3, t);
+
+%% ---- Welch PSDs ----
+plot_PSD(TT.TA, TT.TA_f, TT.MG, TT.MG_f);
+
+%% ---- Rectification (AFTER PSD) ----
+TT.TA_rect = abs(TT.TA_f);
+TT.MG_rect = abs(TT.MG_f);
+
+%% ---- Envelope (ONE window only) ----
+envWindowMs      = 20;
+envWindowSamples = max(1, round(envWindowMs/1000 * fs));
+b                = ones(envWindowSamples,1) / envWindowSamples;
+TT.TA_env        = filtfilt(b, 1, TT.TA_rect);
+TT.MG_env        = filtfilt(b, 1, TT.MG_rect);
+
+%% ---- Find quietest window — TA (intramuscular) ----
+winLen_noise = round(0.5 * fs);   % 500 ms in samples
+thresholds   = [40, 50];
+percentages  = [0.95, 0.90, 0.80, 0.70];
+
+[iQuiet_start, iQuiet_end, thresh_quiet_final, is_quiet] = ...
+    find_quiet_window(TT.TA_rect, fs, winLen_noise, thresholds, percentages, 'TA');
+
+t_quiet_start = double(seconds(TT.tDur(iQuiet_start)));
+t_quiet_end   = double(seconds(TT.tDur(iQuiet_end)));
+fprintf('TA Noise baseline window: %.3f s -> %.3f s (%d samples = 50 ms)\n', ...
+    t_quiet_start, t_quiet_end, winLen_noise);
+
+noise_TA     = TT.TA_rect(iQuiet_start:iQuiet_end);
+noise_rms_TA = rms(noise_TA);
+fprintf('Noise RMS  ->  TA: %.4f\n', noise_rms_TA);
+
+%% ---- Find quiet window — MG (surface) ----
+
+[iQuiet_MG_start, iQuiet_MG_end, thresh_quiet_MG_final, is_quiet_MG] = ...
+    find_quiet_window(TT.MG_rect, fs, winLen_noise, thresholds, percentages, 'MG');
+
+
+
+noise_rms_MG = rms(TT.MG_rect(is_quiet_MG));
+fprintf('Noise RMS  ->  MG: %.4f\n', noise_rms_MG);
+
+%% ---- Plot rectified + envelope ----
+spacing = max([range(TT.TA_f), range(TT.MG_f), range(TT.Ch3)]) * 1.5;
+plot_rect_and_env(t, TT.TA_rect, TT.MG_rect, TT.TA_env, TT.MG_env, TT.Ch3, spacing, envWindowMs);
+
+
+
+%% ---- Preliminary SNR (needed for artifact thresholds) ----
+
+
+snrValue_temp = snr_emg(TT.TA_rect, TT.TA_rect(iQuiet_start:iQuiet_end), ...
+    'xMG', TT.MG_rect, ...
+    'noiseWindowMG', TT.MG_rect(iQuiet_MG_start:iQuiet_MG_end));
+
+
+%% ---- Artifact Removal ----
+
+[TT_clean, TT_NaN, bad_seg] = remove_artifacts(TT, snrValue_temp, fs);
+
+
+%% ---- SNR computation ----
+% First call: needed only to compute is_act for rest mask construction
+
+snrValue_temp2 = snr_emg(TT_clean.TA_rect, TT_clean.TA_rect(iQuiet_start:iQuiet_end), ...
+    'xMG', TT_clean.MG_rect, ...
+    'noiseWindowMG', TT_clean.MG_rect(iQuiet_MG_start:iQuiet_MG_end));
+
+% Attach quiet masks (smoothed to avoid thousands of tiny segments)
+min_quiet_dur        = round(0.005 * fs);  % 5 ms minimum quiet segment
+is_quiet_TA_smooth   = keep_long_runs(is_quiet,    min_quiet_dur);
+is_quiet_MG_smooth   = keep_long_runs(is_quiet_MG, min_quiet_dur);
+snrValue_temp2.is_rest    = fuse_masks(is_quiet_TA_smooth(~bad_seg), fs, 50);
+snrValue_temp2.is_rest_MG = fuse_masks(is_quiet_MG_smooth(~bad_seg), fs, 50);
+snrValue_temp2.thr_rest    = thresh_quiet_final;
+snrValue_temp2.thr_rest_MG = thresh_quiet_MG_final;
+copy = snrValue_temp2;
+
+
+[iSNR_TA_start, iSNR_TA_end] = find_snr_window(copy.is_rest,    TT_clean, fs, 1.0, 'TA');
+[iSNR_MG_start, iSNR_MG_end] = find_snr_window(copy.is_rest_MG, TT_clean, fs, 1.0, 'MG');
+
+
+snrValue = snr_emg(TT_clean.TA_rect, TT_clean.TA_rect(iSNR_TA_start:iSNR_TA_end), ...
+    'xMG', TT_clean.MG_rect, ...
+    'noiseWindowMG', TT_clean.MG_rect(iSNR_MG_start:iSNR_MG_end));snrValue.is_rest    = copy.is_rest;
+
+snrValue.is_rest_MG =copy.is_rest_MG;
+snrValue.thr_rest    = thresh_quiet_final;
+snrValue.thr_rest_MG = thresh_quiet_MG_final;
+snrValue.t_quiet_MG_start = double(seconds(TT.tDur(iQuiet_MG_start)));
+snrValue.t_quiet_MG_end   = double(seconds(TT.tDur(iQuiet_MG_end)));
+snrValue.t_quiet_TA_start = t_quiet_start;
+snrValue.t_quiet_TA_end   = t_quiet_end;
+
+
+fprintf('SNR  ->  TA: %.2f   MG: %.2f\n', snrValue.SNR_TA, snrValue.SNR_MG);
+
+
+%% ---- Amplitude distributions ----
+figure;
+subplot(2,1,1);
+plot_amplitudes(TT.TA_f, 'NumBins', 100, 'Axes', gca, ...
+    'ThrAct', snrValue.thr_act, 'NoiseRMS', noise_rms_TA);
+title('Left TA - Amplitude Distribution (unrectified)');
+subplot(2,1,2);
+plot_amplitudes(TT.MG_f, 'NumBins', 100, 'Axes', gca, ...
+    'ThrAct', snrValue.thr_act_MG, 'NoiseRMS', noise_rms_MG);
+title('Left MG - Amplitude Distribution (unrectified)');
+
+%% ---- Plot Labeled Unrectified Signal  ----
+
+    plot_filtered_labeled(TT_clean.TA_f, TT_clean.MG_f, TT_clean.Ch3, ...
+                          seconds(TT_clean.tDur), snrValue);
+
+%figHandles = findall(0, 'Type', 'figure');
+
+%save('AllFigures_uninjured.fig', 'figHandles')
+
+%% ---- Correlation Analysis ----
+
+%---- Manually defined spasm intervals (in seconds) ----
+
+fig = openfig('emg_corr_4.fig');  % Open saved figure
+
+hold on;
+
+
+fig_xcorr = test_urgent( ...
+    fig, ...
+    TT_clean.TA_env, ...
+    TT_clean.MG_env, ...
+    snrValue.is_act, ...
+    snrValue.is_act_MG, ...
+    fs, 5.0);
+
+saveas(fig_xcorr, 'emg_corr_4.fig');
+%Calculate spasm durations
+
+
+
+
+%------- Analysis of Spasm Duration vs Normal Muscle Contraction ---------
+
