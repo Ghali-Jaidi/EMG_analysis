@@ -1,0 +1,134 @@
+function fig = compare_two_files_xcorr(fs, max_lag_s)
+% compare_two_files_xcorr
+% Pick 2 experiments, run run_emg_analysis twice (plots off),
+% and overlay TA-MG cross-correlation curves (+/- max_lag_s).
+% Spastic files can be restricted to user-provided spasm intervals.
+
+arguments
+    fs (1,1) double {mustBePositive} = 10000
+    max_lag_s (1,1) double {mustBePositive} = 5.0
+end
+
+% ---- Select two MAT files ----
+[f1, p1] = uigetfile('*.mat', 'Select FIRST experiment MAT file');
+if isequal(f1,0), error('No first file selected.'); end
+full1 = fullfile(p1, f1);
+
+[f2, p2] = uigetfile('*.mat', 'Select SECOND experiment MAT file');
+if isequal(f2,0), error('No second file selected.'); end
+full2 = fullfile(p2, f2);
+
+% ---- Ask condition + intervals ----
+[cond1, intervals1] = ask_condition_and_intervals(f1);
+[cond2, intervals2] = ask_condition_and_intervals(f2);
+
+% ---- Run analysis twice (no plotting, no figure saving) ----
+[TT1, snr1, meta1] = run_emg_analysis(fs, struct( ...
+    'plot_figures', false, ...
+    'save_figures', false, ...
+    'fullFile', full1));
+
+[TT2, snr2, meta2] = run_emg_analysis(fs, struct( ...
+    'plot_figures', false, ...
+    'save_figures', false, ...
+    'fullFile', full2));
+
+% ---- Build interval masks (clean timeline length) ----
+mask1 = build_interval_mask(height(TT1), fs, intervals1);
+mask2 = build_interval_mask(height(TT2), fs, intervals2);
+
+% For uninjured, mask will be all-true (by build_interval_mask when intervals empty)
+
+% ---- Create overlay figure/axes ----
+fig = figure;
+ax = axes(fig); hold(ax, 'on');
+mode1 = lower(cond1);  % 'spastic' or 'uninjured'
+mode2 = lower(cond2);
+
+plot_TA_MG_correlation(TT1.TA_env, TT1.MG_env, snr1.is_act, snr1.is_act_MG, fs, max_lag_s, ...
+    struct('Axes',ax,'Color',[0 0 1],'Label',sprintf('%s (%s)', meta1.fileName, cond1), ...
+           'IntervalMask', mask1, 'Mode', mode1));
+
+plot_TA_MG_correlation(TT2.TA_env, TT2.MG_env, snr2.is_act, snr2.is_act_MG, fs, max_lag_s, ...
+    struct('Axes',ax,'Color',[1 0 0],'Label',sprintf('%s (%s)', meta2.fileName, cond2), ...
+           'IntervalMask', mask2, 'Mode', mode2));
+
+% ---- Curve 1 ----
+plot_TA_MG_correlation( ...
+    TT1.TA_env, TT1.MG_env, ...
+    snr1.is_act, snr1.is_act_MG, ...
+    fs, max_lag_s, ...
+    struct('Axes', ax, ...
+           'Color', [0 0 1], ...
+           'Label', sprintf('%s (%s, rec %d)', meta1.fileName, cond1, meta1.recID), ...
+           'IntervalMask', mask1));
+
+% ---- Curve 2 ----
+plot_TA_MG_correlation( ...
+    TT2.TA_env, TT2.MG_env, ...
+    snr2.is_act, snr2.is_act_MG, ...
+    fs, max_lag_s, ...
+    struct('Axes', ax, ...
+           'Color', [1 0 0], ...
+           'Label', sprintf('%s (%s, rec %d)', meta2.fileName, cond2, meta2.recID), ...
+           'IntervalMask', mask2));
+
+legend(ax, 'Location', 'best');
+
+end
+
+% ===================== helpers =====================
+
+function [condLabel, intervals] = ask_condition_and_intervals(fileTag)
+choice = questdlg(sprintf('%s: condition?', fileTag), 'Condition', ...
+                  'Spastic', 'Uninjured', 'Uninjured');
+if isempty(choice)
+    error('Condition selection canceled.');
+end
+
+if strcmpi(choice, 'Spastic')
+    condLabel = 'Spastic';
+
+    prompt = ['Enter spasm intervals as Nx2 matrix in seconds, e.g.:' newline ...
+              '[12.5 14.0; 33.2 35.1]' newline ...
+              'Leave empty to use FULL recording.'];
+    answ = inputdlg(prompt, sprintf('%s spasm intervals', fileTag), [6 60], {''});
+    if isempty(answ)
+        error('Interval input canceled.');
+    end
+
+    if isempty(strtrim(answ{1}))
+        intervals = []; % full recording
+    else
+        intervals = str2num(answ{1}); %#ok<ST2NM>
+        if isempty(intervals) || size(intervals,2) ~= 2
+            error('Intervals must be an Nx2 numeric matrix [t_start t_end].');
+        end
+    end
+else
+    condLabel = 'Uninjured';
+    intervals = [];
+end
+end
+
+function mask = build_interval_mask(N, fs, intervals)
+% intervals: Nx2 [t_start t_end] seconds, or empty => full true
+mask = true(N,1);
+if isempty(intervals)
+    return;
+end
+
+mask(:) = false;
+for k = 1:size(intervals,1)
+    t0 = intervals(k,1);
+    t1 = intervals(k,2);
+    if ~(isfinite(t0) && isfinite(t1)) || t1 <= t0
+        continue;
+    end
+    i0 = max(1, floor(t0*fs) + 1);
+    i1 = min(N, floor(t1*fs));
+    if i1 > i0
+        mask(i0:i1) = true;
+    end
+end
+end

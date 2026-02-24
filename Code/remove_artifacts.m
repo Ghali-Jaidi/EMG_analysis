@@ -17,9 +17,9 @@ arguments
     fs (1,1) double {mustBePositive} = 10000
 end
 
-% Artifact thresholds: 3x the typical active RMS per channel
-artifact_thr_TA = snrValue.Ract_TA * 100;
-artifact_thr_MG = snrValue.Ract_MG * 100;
+% Artifact thresholds: 10x the typical active RMS per channel
+artifact_thr_TA = snrValue.Ract_TA * 10;
+artifact_thr_MG = snrValue.Ract_MG * 10;
 
 fprintf('Artifact thresholds  ->  TA: %.4f   MG: %.4f\n', ...
     artifact_thr_TA, artifact_thr_MG);

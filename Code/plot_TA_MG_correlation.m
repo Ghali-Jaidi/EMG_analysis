@@ -1,16 +1,4 @@
-function fig = plot_TA_MG_correlation(rmsw_TA, rmsw_MG, is_act_TA, is_act_MG, fs, max_lag_s)
-% plot_TA_MG_correlation - Plots cross-correlation and simple correlation
-%                          between TA and MG windowed RMS signals,
-%                          weighted by active periods only
-%
-% Inputs:
-%   rmsw_TA   : windowed RMS of TA signal
-%   rmsw_MG   : windowed RMS of MG signal
-%   is_act_TA : logical mask of TA active periods
-%   is_act_MG : logical mask of MG active periods
-%   fs        : sampling frequency
-%   max_lag_s : maximum lag in seconds to display (default 1.0)
-
+function fig = plot_TA_MG_correlation(rmsw_TA, rmsw_MG, is_act_TA, is_act_MG, fs, max_lag_s, options)
 arguments
     rmsw_TA (:,1) double
     rmsw_MG (:,1) double
@@ -18,45 +6,83 @@ arguments
     is_act_MG (:,1) logical
     fs (1,1) double {mustBePositive} = 10000
     max_lag_s (1,1) double {mustBePositive} = 1.0
+    options.Axes = []
+    options.Color = 'w'
+    options.Label (1,:) char = ''
+    options.IntervalMask (:,1) logical = true(size(rmsw_TA))
+    options.Mode (1,:) char {mustBeMember(options.Mode,{'uninjured','spastic'})} = 'uninjured'
+    options.ShowPeaks (1,1) logical = true
+    options.ShowZeroLag (1,1) logical = true
 end
 
-% Weight: 1 during active periods, 0 during rest
-weight = double(is_act_TA | is_act_MG);
+assert(numel(rmsw_TA)==numel(rmsw_MG));
+assert(numel(rmsw_TA)==numel(options.IntervalMask));
 
-% Mean-subtract then weight to preserve time structure
-rmsw_TA_weighted = (rmsw_TA - mean(rmsw_TA)) .* weight;
-rmsw_MG_weighted = (rmsw_MG - mean(rmsw_MG)) .* weight;
+% ---- SELECT SAMPLES USED FOR CORRELATION ----
+switch lower(options.Mode)
+    case 'uninjured'
+        % Use active-only (either TA or MG active), whole recording
+        use_mask = (is_act_TA | is_act_MG);
+    case 'spastic'
+        % Use only the user-provided spasm intervals (ignore activity masks)
+        use_mask = options.IntervalMask;
+end
 
-% Simple correlation on active periods only
-either_active = logical(weight);
-r = corrcoef(rmsw_TA(either_active), rmsw_MG(either_active));
-fprintf('TA-MG rmsw correlation (active only): %.3f\n', r(1,2));
+if nnz(use_mask) < 10
+    warning('Too few samples selected for correlation.');
+end
 
-% Cross-correlation with time structure preserved
-[xc, lags]  = xcorr(rmsw_TA_weighted, rmsw_MG_weighted, 'normalized');
-lags_s      = lags / fs;
-mask_lag    = abs(lags_s) <= max_lag_s;
-xc_masked   = xc(mask_lag);
-lags_masked = lags_s(mask_lag);
+% Weight: 1 on selected samples, 0 elsewhere
+weight = double(use_mask);
 
-% Peak negative and positive lags
+% Masked mean
+muTA = sum(rmsw_TA(use_mask)) / max(1, nnz(use_mask));
+muMG = sum(rmsw_MG(use_mask)) / max(1, nnz(use_mask));
+
+rmsw_TA_weighted = (rmsw_TA - muTA) .* weight;
+rmsw_MG_weighted = (rmsw_MG - muMG) .* weight;
+
+% Simple correlation on selected samples
+if nnz(use_mask) >= 2
+    r = corrcoef(rmsw_TA(use_mask), rmsw_MG(use_mask));
+    fprintf('TA-MG correlation (%s): %.3f\n', lower(options.Mode), r(1,2));
+end
+
+% Cross-correlation
+[xc, lags] = xcorr(rmsw_TA_weighted, rmsw_MG_weighted, 'normalized');
+lags_s = lags / fs;
+
+keep = abs(lags_s) <= max_lag_s;
+xc_masked   = xc(keep);
+lags_masked = lags_s(keep);
+
+% Peaks
 [~, idx_min] = min(xc_masked);
 [~, idx_max] = max(xc_masked);
 
-figure;
-plot(lags_masked, xc_masked, 'w', 'LineWidth', 1.5);
-hold on;
-plot(lags_masked(idx_min), xc_masked(idx_min), 'rv', 'MarkerFaceColor', 'r', ...
-    'DisplayName', sprintf('Min: %.3f at %.0f ms', xc_masked(idx_min), lags_masked(idx_min)*1000));
-plot(lags_masked(idx_max), xc_masked(idx_max), 'g^', 'MarkerFaceColor', 'g', ...
-    'DisplayName', sprintf('Max: %.3f at %.0f ms', xc_masked(idx_max), lags_masked(idx_max)*1000));
-xline(0, '--k', 'Zero lag', 'HandleVisibility', 'off');
-xlabel('Lag (s)');
-ylabel('Cross-correlation');
-title(sprintf('TA-MG cross-correlation (\\pm%.0f ms, active periods only)', max_lag_s*1000));
-grid on; box on;
-legend('Location', 'best');
+% Plot target
+if isempty(options.Axes) || ~isvalid(options.Axes)
+    fig = figure; ax = axes(fig);
+else
+    ax = options.Axes; fig = ancestor(ax,'figure');
+end
+hold(ax,'on');
 
-fig = gcf;
+h = plot(ax, lags_masked, xc_masked, 'LineWidth', 1.5);
+set(h,'Color',options.Color);
+if ~isempty(options.Label), set(h,'DisplayName',options.Label); end
 
+if options.ShowPeaks
+    plot(ax, lags_masked(idx_min), xc_masked(idx_min), 'rv', 'MarkerFaceColor','r', 'HandleVisibility','off');
+    plot(ax, lags_masked(idx_max), xc_masked(idx_max), 'g^', 'MarkerFaceColor','g', 'HandleVisibility','off');
+end
+if options.ShowZeroLag
+    xline(ax, 0, '--k', 'HandleVisibility','off');
+end
+
+if isempty(ax.Title.String)
+    xlabel(ax,'Lag (s)'); ylabel(ax,'Cross-correlation');
+    title(ax, sprintf('TA-MG cross-correlation (\\pm%.0f ms)', max_lag_s*1000));
+    grid(ax,'on'); box(ax,'on');
+end
 end
