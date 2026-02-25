@@ -143,8 +143,8 @@ snr_pre.thr_rest    = thresh_quiet_TA;
 snr_pre.thr_rest_MG = thresh_quiet_MG;
 
 %% ---- Artifact removal ----
-[TT_clean, ~, bad_seg] = remove_artifacts(TT, snr_pre, fs);
-% Ensure filtered signals exist in TT_clean (depends on remove_artifacts implementation)
+[~, TT_NaN, bad_seg] = remove_artifacts(TT, snr_pre, fs);
+TT_clean = TT_NaN;  % keep name for compatibility downstream, but it is NOT compressed now% Ensure filtered signals exist in TT_clean (depends on remove_artifacts implementation)
 if ~ismember('TA_f', TT_clean.Properties.VariableNames)
     TT_clean.TA_f = notch_filter(butter_filter(TT_clean.TA));
 end
@@ -174,11 +174,17 @@ else
 end
 
 %% ---- Final rest masks (mapped to cleaned timeline) ----
-is_rest_TA_clean = fuse_masks(is_rest_TA_unclean(~bad_seg), fs, gap_ms);
-is_rest_MG_clean = fuse_masks(is_rest_MG_unclean(~bad_seg), fs, gap_ms);
+is_rest_TA_clean = is_rest_TA_unclean;
+is_rest_MG_clean = is_rest_MG_unclean;
+
+% mark bad segments as not-rest (and later also not-active)
+is_rest_TA_clean(bad_seg) = false;
+is_rest_MG_clean(bad_seg) = false;
+
+is_rest_TA_clean = fuse_masks(is_rest_TA_clean, fs, gap_ms);
+is_rest_MG_clean = fuse_masks(is_rest_MG_clean, fs, gap_ms);
 
 assert(numel(is_rest_TA_clean) == height(TT_clean), "Rest mask length mismatch with TT_clean.");
-
 %% ---- Final SNR (uses chosen TA_clean/MG_clean) ----
 snrValue = snr_emg(TA_clean, is_rest_TA_clean, fs, options.snr_win_ms, options.act_prc, ...
     'xMG', MG_clean, ...

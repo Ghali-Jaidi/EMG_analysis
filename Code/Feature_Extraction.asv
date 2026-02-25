@@ -1,0 +1,163 @@
+%% =========================
+% Batch preprocessing and SNR comparison
+%% =========================
+
+fs = 10000;
+
+%% ---- Number of recordings ----
+answer = inputdlg('How many experiment MAT files do you want to process?', ...
+                  'Number of recordings', [1 50], {'2'});
+
+if isempty(answer)
+    error('Selection cancelled.');
+end
+
+nFiles = str2double(answer{1});
+
+if isnan(nFiles) || nFiles <= 0
+    error('Invalid number of files.');
+end
+
+%% ---- Preallocate result struct ----
+R = struct( ...
+    'file', [], 'fullFile', [], 'recID', [], ...
+    'cond', [], 'group', [], 'intervals', [], ...
+    'snrTA', [], 'snrMG', [], 'snrTAdB', [], 'snrMGdB', [] );
+
+R = repmat(R, nFiles, 1);
+
+%% ---- File selection and preprocessing ----
+for k = 1:nFiles
+
+    msg = sprintf([ ...
+        'Please select recording %d of %d.\n\n' ...
+        'Select ONE experiment MAT file corresponding to a single mouse recording.\n' ...
+        'After selecting, preprocessing will start automatically.'], ...
+        k, nFiles);
+
+    uiwait(msgbox(msg,'Select experiment file','modal'));
+
+    [f,p] = uigetfile('*.mat', ...
+        sprintf('Select experiment MAT file (%d/%d)', k, nFiles));
+
+    if isequal(f,0)
+        error('File selection cancelled.');
+    end
+
+    fullFile = fullfile(p,f);
+
+    fprintf('\n=== [%d/%d] Processing: %s ===\n', k, nFiles, fullFile);
+
+    [TTk, snrk, metak] = preprocess_and_label(fs, ...
+        'fullFile', fullFile, ...
+        'plot_figures', false, ...
+        'save_figures', false);
+
+    label = sprintf('%s (rec %d)', f, metak.recID);
+    [condk, intervalsk, groupk] = ask_condition_and_intervals(label);
+
+    R(k).file      = f;
+    R(k).fullFile  = fullFile;
+    R(k).recID     = metak.recID;
+    R(k).cond      = condk;
+    R(k).group     = groupk;
+    R(k).intervals = intervalsk;
+
+    R(k).snrTA   = snrk.SNR_TA;
+    R(k).snrMG   = snrk.SNR_MG;
+    R(k).snrTAdB = snrk.SNR_dB;
+    R(k).snrMGdB = snrk.SNR_MG_dB;
+
+end
+
+%% ---- Multi-subplot SNR figure ----
+allSNR = [[R.snrTA], [R.snrMG]];
+yMax = max(allSNR) * 1.1;
+
+if ~isfinite(yMax) || yMax <= 0
+    yMax = 1;
+end
+
+nCols = ceil(sqrt(nFiles));
+nRows = ceil(nFiles / nCols);
+
+figure('Name','SNR per recording');
+
+for k = 1:nFiles
+    subplot(nRows,nCols,k);
+
+    bar([R(k).snrTA, R(k).snrMG]);
+    set(gca,'XTickLabel',{'TA','MG'});
+    ylim([0 yMax]);
+    grid on;
+
+    title(sprintf('%s\nrec %d | %s', ...
+        R(k).file, R(k).recID, string(R(k).cond)), ...
+        'Interpreter','none','FontSize',9);
+
+    ylabel('SNR');
+end
+
+sgtitle('SNR per recording');
+
+%% ---- Group comparison ----
+groups = lower(string({R.group}));
+
+isUninj = groups == "uninjured";
+isInj   = groups == "injured";
+
+assert(any(isUninj) && any(isInj), ...
+    "Need at least one Uninjured and one Spastic recording.");
+
+mu_uninj = [mean([R(isUninj).snrTA]), mean([R(isUninj).snrMG])];
+mu_inj   = [mean([R(isInj).snrTA]),   mean([R(isInj).snrMG])];
+
+%% ---- Plot group averages ----
+figure('Name','Average SNR comparison');
+
+M = [mu_uninj; mu_inj];
+
+bar(M);
+set(gca,'XTickLabel',{'Uninjured','Spastic'});
+legend({'TA','MG'},'Location','best');
+
+ylabel('Mean SNR');
+grid on;
+
+ylim([0 max([yMax, max(M(:))*1.1])]);
+
+title(sprintf('Mean SNR | Uninj TA %.2f MG %.2f | Spastic TA %.2f MG %.2f', ...
+    mu_uninj(1), mu_uninj(2), mu_inj(1), mu_inj(2)));
+% ---- Save open figures to .fig files ----
+hFigs = findobj('Type','figure');
+
+if isempty(hFigs)
+    warning('No figures to save.');
+else
+    % Create output directory next to the first processed file
+    outDir = fullfile(fileparts(R(1).fullFile),'figures');
+    if ~exist(outDir,'dir')
+        mkdir(outDir);
+    end
+
+    for i = 1:numel(hFigs)
+        h = hFigs(i);
+        % Use figure Name if available, otherwise use handle number
+        figName = get(h,'Name');
+        if isempty(figName)
+            figName = sprintf('figure_%d', h.Number);
+        end
+        % Sanitize filename
+        figName = regexprep(figName,'[^\w\-\. ]','_');
+        filename = fullfile(outDir, sprintf('%s.fig', figName));
+        % If duplicate names occur, append index
+        if exist(filename,'file')
+            filename = fullfile(outDir, sprintf('%s_%d.fig', figName, i));
+        end
+        try
+            savefig(h, filename);
+        catch ME
+            warning('Failed to save figure "%s": %s', figName, ME.message);
+        end
+    end
+end
