@@ -7,13 +7,12 @@ function [TT_clean, snrValue, meta] = preprocess_and_label(fs, options)
 
 arguments
     fs (1,1) double {mustBePositive} = 10000
-    options.envWindowMs (1,1) double {mustBePositive} = 3
+    options.envWindowMs (1,1) double {mustBePositive} = 1
     options.thresholds (1,:) double {mustBeNonempty} = [40 50]
-    options.min_quiet_dur_ms (1,1) double {mustBePositive} = 10
-    options.fuse_gap_ms (1,1) double {mustBePositive} =  30
+    options.min_quiet_dur_ms (1,1) double {mustBePositive} = 5
+    options.fuse_gap_ms (1,1) double {mustBePositive} = 100
     options.snr_win_ms (1,1) double {mustBePositive} = 20
-    options.act_prc (1,1) double {mustBePositive} = 80
-    options.act_prc_MG (1,1) double {mustBePositive} = 50
+    options.act_prc (1,1) double {mustBePositive} = 75
 
     options.plot_figures (1,1) logical = true   % NEW
     options.save_figures (1,1) logical = false
@@ -134,9 +133,7 @@ noise_rms_MG = rms(MG(is_rest_MG_unclean)); % FIX
 
 %% ---- Preliminary SNR (uses chosen TA/MG) ----
 snr_pre = snr_emg(TA, is_rest_TA_unclean, fs, options.snr_win_ms, options.act_prc, ...
-    'xMG', MG, ...
-    'is_rest_MG', is_rest_MG_unclean, ...
-    'act_prc_MG', options.act_prc_MG);
+    'xMG', MG, 'is_rest_MG', is_rest_MG_unclean);
 snr_pre.is_act    = fuse_masks(snr_pre.is_act,    fs, gap_ms);
 snr_pre.is_act_MG = fuse_masks(snr_pre.is_act_MG, fs, gap_ms);
 snr_pre.thr_rest    = thresh_quiet_TA;
@@ -144,21 +141,7 @@ snr_pre.thr_rest_MG = thresh_quiet_MG;
 
 %% ---- Artifact removal ----
 [TT_clean, ~, bad_seg] = remove_artifacts(TT, snr_pre, fs);
-% Ensure filtered signals exist in TT_clean (depends on remove_artifacts implementation)
-if ~ismember('TA_f', TT_clean.Properties.VariableNames)
-    TT_clean.TA_f = notch_filter(butter_filter(TT_clean.TA));
-end
-if ~ismember('MG_f', TT_clean.Properties.VariableNames)
-    TT_clean.MG_f = notch_filter(butter_filter(TT_clean.MG));
-end
 
-% Ensure rect exists too (if remove_artifacts dropped it)
-if ~ismember('TA_rect', TT_clean.Properties.VariableNames)
-    TT_clean.TA_rect = abs(TT_clean.TA_f);
-end
-if ~ismember('MG_rect', TT_clean.Properties.VariableNames)
-    TT_clean.MG_rect = abs(TT_clean.MG_f);
-end
 
 % Recompute env on cleaned rect (always possible)
 TT_clean.TA_env = filtfilt(b, 1, TT_clean.TA_rect);
@@ -181,9 +164,7 @@ assert(numel(is_rest_TA_clean) == height(TT_clean), "Rest mask length mismatch w
 
 %% ---- Final SNR (uses chosen TA_clean/MG_clean) ----
 snrValue = snr_emg(TA_clean, is_rest_TA_clean, fs, options.snr_win_ms, options.act_prc, ...
-    'xMG', MG_clean, ...
-    'is_rest_MG', is_rest_MG_clean, ...
-    'act_prc_MG', options.act_prc_MG);
+    'xMG', MG_clean, 'is_rest_MG', is_rest_MG_clean);
 % ---- Fuse active and rest masks (merge close bursts; no keep_long_runs for active parts) ----
 snrValue.is_act    = fuse_masks(snrValue.is_act,    fs, gap_ms);
 snrValue.is_act_MG = fuse_masks(snrValue.is_act_MG, fs, gap_ms);
@@ -207,15 +188,7 @@ if options.plot_figures
         'ThrAct', snrValue.thr_act_MG, 'NoiseRMS', noise_rms_MG);
     title('Left MG - Amplitude Distribution (unrectified)');
 
-    if options.use_envelope
-        TA_plot = TT_clean.TA_env .* sign(TT_clean.TA_f);
-        MG_plot = TT_clean.MG_env .* sign(TT_clean.MG_f);
-    else
-        TA_plot = TT_clean.TA_f;
-        MG_plot = TT_clean.MG_f;
-    end
-    
-    plot_filtered_labeled(TA_plot, MG_plot, TT_clean.Ch3, ...
+    plot_filtered_labeled(TT_clean.TA_env, TT_clean.MG_env, TT_clean.Ch3, ...
         seconds(TT_clean.tDur), snrValue);
 end
 

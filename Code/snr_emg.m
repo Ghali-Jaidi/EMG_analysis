@@ -7,6 +7,8 @@ arguments
     act_prc (1,1) double {mustBePositive} = 80
     options.xMG (:,1) double = []
     options.is_rest_MG (:,1) {mustBeNumericOrLogical} = []
+    options.act_prc_MG (1,1) double {mustBePositive} = act_prc
+
 end
 
 assert(all(isfinite(x)), "x contains NaN/Inf");
@@ -65,7 +67,7 @@ if ~isempty(options.xMG)
 
     Rrest_MG = median(rmsw_MG(is_rest_MG));
 
-    thr_act_MG = prctile(rmsw_MG, act_prc);
+    thr_act_MG = prctile(rmsw_MG, options.act_prc_MG);
     is_act_MG  = rmsw_MG >= thr_act_MG;
     minAct_MG  = round(0.05*fs);
     is_act_MG  = keep_long_runs(is_act_MG, minAct_MG);
