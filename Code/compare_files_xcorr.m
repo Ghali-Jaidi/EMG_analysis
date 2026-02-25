@@ -234,11 +234,7 @@ end
 end
 
 function [xTA, xMG, actMask] = get_x_signals(Rk, use_env)
-TAf = Rk.TA_f(:);
-MGf = Rk.MG_f(:);
-if isempty(TAf) || isempty(MGf)
-    error('R is missing TA_f/MG_f. Store TT.TA_f and TT.MG_f in main before calling compare_files_xcorr_avg(...,''R'',R).');
-end
+
 
 if use_env
     % unrectified envelope by re-applying sign of filtered signal
@@ -247,11 +243,14 @@ if use_env
     if isempty(envTA) || isempty(envMG)
         error('R is missing TA_env/MG_env. Store TT.TA_env and TT.MG_env in main.');
     end
-    xTA = envTA %.* sign(TAf);
-    xMG = envMG %.* sign(MGf);
+    xTA = envTA; %.* sign(TAf);
+    xMG = envMG; %.* sign(MGf);
 else
-    xTA = TAf;
-    xMG = MGf;
+    xTA = Rk.TA_f(:);
+    xMG = Rk.MG_f(:);
+    if isempty(TAf) || isempty(MGf)
+        error('R is missing TA_f/MG_f. Store TT.TA_f and TT.MG_f in main before calling compare_files_xcorr_avg(...,''R'',R).');
+    end
 end
 
 actMask = (Rk.is_act_TA(:) | Rk.is_act_MG(:));

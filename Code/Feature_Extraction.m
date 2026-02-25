@@ -163,12 +163,12 @@ muDur_spasm = [mean([R(isInj).durSpasmTA],  'omitnan'), mean([R(isInj).durSpasmM
 M_DUR = [muDur_uninj; muDur_spasm];
 
 %% ---- Cross-correlation: NO UI, reuse R ----
-% %{ xcOut = compare_files_xcorr(fs, max_lag_s, 'R', R, 'UseEnvelope', false, ...
-%     'GroupUninj', "uninjured", 'GroupSpastic', "injured");
-% 
-% lags_ref     = xcOut.lags_s(:);
-% meanXC_uninj = xcOut.meanU(:);
-% meanXC_inj   = xcOut.meanS(:);
+xcOut = compare_files_xcorr(fs, max_lag_s, 'R', R, 'UseEnvelope', true, ...
+    'GroupUninj', "uninjured", 'GroupSpastic', "injured");
+
+lags_ref     = xcOut.lags_s(:);
+meanXC_uninj = xcOut.meanU(:);
+meanXC_inj   = xcOut.meanS(:);
 
 %% ---- Y-limits ----
 yMaxSNR = max(M_SNR(:), [], 'omitnan') * 1.1;  if ~isfinite(yMaxSNR) || yMaxSNR<=0, yMaxSNR=1; end
@@ -217,17 +217,18 @@ title(sprintf(['Contraction Duration\n' ...
     muDur_uninj(1), muDur_uninj(2), muDur_spasm(1), muDur_spasm(2)));
 
 % ---------- Cross-correlation ----------
-% {subplot(1,4,4);
-% plot(lags_ref, meanXC_uninj, 'LineWidth', 1.5); hold on;
-% plot(lags_ref, meanXC_inj,   'LineWidth', 1.5);
-% grid on;
-% xlabel('Lag (s)');
-% ylabel('Normalized xcorr');
-% ylim([-yMaxXC yMaxXC]);
-% title(sprintf(['TA–MG Cross-correlation (mean)\n' ...
-%     'Uninjured: active | Spastic: mean over spasm segments | \\pm %.1f s'], max_lag_s));
-% legend({'Uninjured mean','Spastic mean'}, 'Location','best');
-% }
+subplot(1,4,4);
+plot(lags_ref, meanXC_uninj, 'LineWidth', 1.5); 
+hold on;
+plot(lags_ref, meanXC_inj,   'LineWidth', 1.5);
+grid on;
+xlabel('Lag (s)');
+ylabel('Normalized xcorr');
+ylim([-yMaxXC yMaxXC]);
+title(sprintf(['TA–MG Cross-correlation (mean)\n' ...
+    'Uninjured: active | Spastic: mean over spasm segments | \\pm %.1f s'], max_lag_s));
+legend({'Uninjured mean','Spastic mean'}, 'Location','best');
+
 
 %% =========================
 % Local functions
