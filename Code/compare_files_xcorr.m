@@ -5,8 +5,8 @@ function out = compare_files_xcorr(fs, max_lag_s, varargin)
 %   - If called with R: uses provided R (no UI), computes curves, and returns group means
 %
 % Preprocessing is identical for both groups:
-%   UseEnvelope = true  -> uses unrectified envelope with sign of filtered signal: env .* sign(filt)
-%   UseEnvelope = false -> uses unrectified filtered signal (TA_f / MG_f)
+%   UseEnvelope = true  -> uses rectified envelope 
+%   UseEnvelope = false -> uses rectified filtered signal (TA_rect / MG_rect)
 %
 % Uninjured curve per recording: xcorr on active samples (is_act_TA OR is_act_MG)
 % Spastic curve per recording: xcorr per spasm interval segment, average within recording
@@ -17,7 +17,7 @@ function out = compare_files_xcorr(fs, max_lag_s, varargin)
 %   ask_condition_and_intervals.m
 %
 % Requires (R mode):
-%   R must contain: group, intervals, is_act_TA, is_act_MG, TA_f, MG_f, TA_env, MG_env
+%   R must contain: group, intervals, is_act_TA, is_act_MG, TA_rect, MG_rect, TA_env, MG_env
 
 arguments
     fs (1,1) double {mustBePositive} = 10000
@@ -29,7 +29,7 @@ end
 
 p = inputParser;
 p.addParameter('R', [], @(x) isempty(x) || isstruct(x));
-p.addParameter('UseEnvelope', false, @(x) islogical(x) && isscalar(x));
+p.addParameter('UseEnvelope', true, @(x) islogical(x) && isscalar(x));
 p.addParameter('MinSegS', 0.10, @(x) isnumeric(x) && isscalar(x) && x>0);
 p.addParameter('GroupUninj', "uninjured", @(x) isstring(x) || ischar(x));
 p.addParameter('GroupSpastic', "injured", @(x) isstring(x) || ischar(x));
@@ -59,7 +59,7 @@ if isempty(Rin)
     R = repmat(struct( ...
         'file', "", 'fullFile', "", 'recID', NaN, ...
         'cond', "", 'group', "", 'intervals', [], ...
-        'TA_f', [], 'MG_f', [], 'TA_env', [], 'MG_env', [], ...
+        'TA_rect', [], 'MG_rect', [], 'TA_env', [], 'MG_env', [], ...
         'is_act_TA', [], 'is_act_MG', [] ), nFiles, 1);
 
     for k = 1:nFiles
@@ -67,11 +67,12 @@ if isempty(Rin)
         [f,pth] = uigetfile('*.mat', sprintf('Select experiment MAT file (%d/%d)', k, nFiles));
         if isequal(f,0), error('Cancelled'); end
         fullFile = fullfile(pth,f);
-
+    
         [TT, snrV, meta] = preprocess_and_label(fs, ...
             'fullFile', fullFile, ...
             'plot_figures', false, ...
-            'save_figures', false);
+            'save_figures', false, ...
+            'use_envelope', use_env);
 
         tag = sprintf('%s (rec %d)', f, meta.recID);
         [condLabel, intervals] = ask_condition_and_intervals(tag);
@@ -92,8 +93,8 @@ if isempty(Rin)
         R(k).group = group;
         R(k).intervals = intervals;
 
-        R(k).TA_f = TT.TA_f(:);
-        R(k).MG_f = TT.MG_f(:);
+        R(k).TA_rect = TT.TA_rect(:);
+        R(k).MG_rect = TT.MG_rect(:);
         R(k).TA_env = TT.TA_env(:);
         R(k).MG_env = TT.MG_env(:);
 
@@ -119,6 +120,7 @@ if isempty(Rin)
     xlabel(ax,'Lag (s)'); ylabel(ax,'Normalized xcorr');
     title(ax, sprintf('TA–MG cross-correlation | \\pm %.1f s | %s', max_lag_s, ternary(use_env,"env*sign(filt)","filtered")));
     legend(ax,'Location','best');
+    fprintf('Rec %d group=%s use_env=%d\n', i,RecCurves(i).group, use_env);
 
     out = struct();
     out.mode = "ui_overlay";
@@ -142,16 +144,44 @@ assert(any(isUninj) && any(isSpas), 'Need at least one uninjured and one spastic
 
 XU = stack_curves(RecCurves(isUninj), L);
 XS = stack_curves(RecCurves(isSpas),  L);
+Xseg = [];
+
+for i = find(isSpas)
+    if isfield(RecCurves(i),'xc_segments') && ~isempty(RecCurves(i).xc_segments)
+        Xseg = [Xseg, RecCurves(i).xc_segments]; %#ok<AGROW>
+    end
+end
+
+fprintf('XS size = %d x %d\n', size(XS,1), size(XS,2));
+if isempty(XS)
+    fprintf('No spasm curves survived stack_curves.\n');
+else
+    fprintf('finite meanS = %d / %d\n', sum(isfinite(mean(XS,1,'omitnan'))), size(XS,2));
+    fprintf('rows with any finite = %d\n', sum(any(isfinite(XS),2)));
+end
 
 out = struct();
-out.lags_s = lags_s;
-out.meanU  = mean(XU, 1, 'omitnan').';
-out.meanS  = mean(XS, 1, 'omitnan').';
-out.n_uninj_used = size(XU,1);
-out.n_spas_used  = size(XS,1);
-out.UseEnvelope  = use_env;
-out.settings = struct('fs',fs,'max_lag_s',max_lag_s,'min_seg_s',min_seg_s,'signal',ternary(use_env,"env*sign(filt)","filtered"));
+out.lags_s = (-maxLag:maxLag).' / fs;
 
+out.meanU = mean(XU, 1, 'omitnan').';      % (L×1)
+out.sdU   = std(XU,  0, 1, 'omitnan').';   % (L×1)
+
+out.meanS = mean(XS, 1, 'omitnan').';
+out.sdS   = std(XS,  0, 1, 'omitnan').';
+out.meanS_seg = mean(Xseg,2,'omitnan');
+out.sdS_seg   = std(Xseg,0,2,'omitnan');
+out.nSeg      = size(Xseg,2);
+out.ciS_within = 1.96 * out.sdS_seg ./ sqrt(max(out.nSeg,1));
+
+out.n_uninj_used = size(XU, 1);            % # recordings used
+out.n_spas_used  = size(XS, 1);
+
+out.UseEnvelope = use_env;
+out.settings = struct( ...
+    'fs', fs, ...
+    'max_lag_s', max_lag_s, ...
+    'min_seg_s', min_seg_s, ...
+    'signal', ternary(use_env, "env", "filtered") );
 end
 
 %% ===================== plot-only function =====================
@@ -183,9 +213,8 @@ end
 
 function RecCurves = compute_curves_from_R(R, fs, maxLag, min_seg_n, use_env, grpU, grpS)
 lags_s = (-maxLag:maxLag).'/fs;
-RecCurves = struct('group',"",'lags_s',lags_s,'xc',nan(numel(lags_s),1),'label',"");
+RecCurves = struct('group',"",'lags_s',lags_s,'xc',nan(numel(lags_s),1), 'xc_segments', [],'label',"");
 RecCurves = repmat(RecCurves, numel(R), 1);
-
 
 disp(fieldnames(R))
 disp(R(1))
@@ -210,7 +239,10 @@ for i = 1:numel(R)
         % cut out NaNs and split again (artifact NaNs can break an interval)
         valid = isfinite(xTA) & isfinite(xMG);
         segIdx = restrict_segments_to_mask(segIdx, valid);
-        [xc, ok] = xcorr_avg_over_segments(xTA, xMG, segIdx, maxLag, min_seg_n);
+        
+        [xc, ok, Xseg] = xcorr_avg_over_segments(xTA, xMG, segIdx, maxLag, min_seg_n);
+        RecCurves(i).xc_segments = Xseg;   % store for CI later
+
     else
         [xc, ok] = xcorr_from_mask(xTA, xMG, actMask, maxLag, min_seg_n);
     end
@@ -246,11 +278,12 @@ if use_env
     xTA = envTA; %.* sign(TAf);
     xMG = envMG; %.* sign(MGf);
 else
-    xTA = Rk.TA_f(:);
-    xMG = Rk.MG_f(:);
-    if isempty(TAf) || isempty(MGf)
+    xTA = Rk.TA_rect(:);
+    xMG = Rk.MG_rect(:);
+    if isempty(xTA) || isempty(xMG)
         error('R is missing TA_f/MG_f. Store TT.TA_f and TT.MG_f in main before calling compare_files_xcorr_avg(...,''R'',R).');
     end
+
 end
 
 actMask = (Rk.is_act_TA(:) | Rk.is_act_MG(:));
@@ -272,7 +305,7 @@ if ~any(valid), return; end
 segIdx = mask_to_segments(valid);
 
 % Average xcorr over contiguous segments
-i
+
 [xc_mean, ok] = xcorr_avg_over_segments(x, y, segIdx, maxLag, min_seg_n);
 end
 
@@ -306,44 +339,25 @@ for k = 1:size(intervals,1)
 end
 end
 
-function [xc_mean, ok] = xcorr_avg_over_segments(x, y, segIdx, maxLag, min_seg_n)
-
+function [xc_mean, ok, X] = xcorr_avg_over_segments(x, y, segIdx, maxLag, min_seg_n)
 ok = false;
-
-% ---- initialize storage ----
 X = [];   % each column = one segment xcorr
 
 for s = 1:numel(segIdx)
-
     idx = segIdx{s};
+    if numel(idx) < min_seg_n, continue; end
 
-    if numel(idx) < min_seg_n
-        continue
-    end
-
-    xz = x(idx);
-    yz = y(idx);
-
-    % remove NaNs
+    xz = x(idx); yz = y(idx);
     good = isfinite(xz) & isfinite(yz);
-    xz = xz(good);
-    yz = yz(good);
+    xz = xz(good); yz = yz(good);
+    if numel(xz) < min_seg_n, continue; end
+    if std(xz) < eps || std(yz) < eps, continue; end
 
-    if numel(xz) < min_seg_n
-        continue
-    end
-
-    % avoid zero variance (xcorr coeff would become NaN)
-    if std(xz) < eps || std(yz) < eps
-        continue
-    end
-
+    
     xc = xcorr(xz, yz, maxLag, 'coeff');
-
     X(:,end+1) = xc; %#ok<AGROW>
 end
 
-% ---- output ----
 if ~isempty(X)
     xc_mean = mean(X,2,'omitnan');
     ok = true;

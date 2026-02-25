@@ -123,20 +123,45 @@ for k = 1:nFiles
         R(k).durSpasmMG = NaN;
 
     elseif groupk == "injured"
+
         R(k).durNormTA  = NaN;
         R(k).durNormMG  = NaN;
-        if any(spasmWin)
-            R(k).durSpasmTA = max_bout_duration(actTA & spasmWin, fs);
-            R(k).durSpasmMG = max_bout_duration(actMG & spasmWin, fs);
+    
+        if ~isempty(intervalsk)
+    
+            nSp = size(intervalsk,1);
+            durTA_each = nan(nSp,1);
+            durMG_each = nan(nSp,1);
+    
+            for ii = 1:nSp
+                mask_i = build_interval_mask(N, fs, intervalsk(ii,:));
+    
+                if ~any(mask_i), continue; end
+    
+                durTA_each(ii) = max_bout_duration(actTA & mask_i, fs);
+                durMG_each(ii) = max_bout_duration(actMG & mask_i, fs);
+            end
+    
+            % Bar height (mean of per-spasm maxima)
+            R(k).durSpasmTA = mean(durTA_each, 'omitnan');
+            R(k).durSpasmMG = mean(durMG_each, 'omitnan');
+    
+            % SD between spasms (for error bars)
+            R(k).durSpasmTA_sd = std(durTA_each, 0, 'omitnan');
+            R(k).durSpasmMG_sd = std(durMG_each, 0, 'omitnan');
+    
         else
             R(k).durSpasmTA = NaN;
             R(k).durSpasmMG = NaN;
+            R(k).durSpasmTA_sd = NaN;
+            R(k).durSpasmMG_sd = NaN;
         end
+    
     else
-        R(k).durNormTA  = mean_bout_duration(actTA, fs);
-        R(k).durNormMG  = mean_bout_duration(actMG, fs);
-        R(k).durSpasmTA = NaN;
-        R(k).durSpasmMG = NaN;
+            R(k).durNormTA  = mean_bout_duration(actTA, fs);
+            R(k).durNormMG  = mean_bout_duration(actMG, fs);
+            R(k).durSpasmTA = NaN;
+            R(k).durSpasmMG = NaN;
     end
 
 end
@@ -168,7 +193,27 @@ xcOut = compare_files_xcorr(fs, max_lag_s, 'R', R, 'UseEnvelope', true, ...
 
 lags_ref     = xcOut.lags_s(:);
 meanXC_uninj = xcOut.meanU(:);
+sdXC_uninj   = xcOut.sdU(:);
+nU           = xcOut.n_uninj_used;
+
+
 meanXC_inj   = xcOut.meanS(:);
+sdXC_inj   = xcOut.sdS(:);
+
+nS         = xcOut.n_spas_used;
+
+z = 1.96;  % ~95% CI
+ciU = z * (sdXC_uninj ./ sqrt(max(nU,1)));
+% --- choose spastic CI source ---
+if isfield(xcOut,'ciS_within') && nS < 2 && isfield(xcOut,'meanS_seg')
+    % fallback: CI across spasm segments within the single recording
+    meanXC_inj = xcOut.meanS_seg(:);
+    ciS        = xcOut.ciS_within(:);
+    ciLabelS   = sprintf('Spastic 95%% CI within spasms (nSeg=%d)', xcOut.nSeg);
+else
+    % default: CI across recordings
+    ciLabelS = sprintf('Spastic 95%% CI across recs (n=%d)', nS);
+end
 
 %% ---- Y-limits ----
 yMaxSNR = max(M_SNR(:), [], 'omitnan') * 1.1;  if ~isfinite(yMaxSNR) || yMaxSNR<=0, yMaxSNR=1; end
@@ -177,58 +222,144 @@ yMaxDur = max(M_DUR(:), [], 'omitnan') * 1.1;  if ~isfinite(yMaxDur) || yMaxDur<
 yMaxXC  = max([abs(meanXC_uninj); abs(meanXC_inj)], [], 'omitnan') * 1.1;
 if ~isfinite(yMaxXC) || yMaxXC<=0, yMaxXC = 1; end
 
+
+
+%% ---- Group SDs: SNR ----
+sdSNR_uninj = [std([R(isUninj).snrTA], 0, 'omitnan'), std([R(isUninj).snrMG], 0, 'omitnan')];
+sdSNR_inj   = [std([R(isInj).snrTA],   0, 'omitnan'), std([R(isInj).snrMG],   0, 'omitnan')];
+SD_SNR = [sdSNR_uninj; sdSNR_inj];
+
+%% ---- Group SDs: PNR ----
+sdPNR_uninj = [std([R(isUninj).pnrTA], 0, 'omitnan'), std([R(isUninj).pnrMG], 0, 'omitnan')];
+sdPNR_inj   = [std([R(isInj).pnrTA],   0, 'omitnan'), std([R(isInj).pnrMG],   0, 'omitnan')];
+SD_PNR = [sdPNR_uninj; sdPNR_inj];
+
+%% ---- Group SDs: Duration ----
+sdDur_uninj = [std([R(isUninj).durNormTA], 0, 'omitnan'), std([R(isUninj).durNormMG], 0, 'omitnan')];
+sdDur_spasm = [mean([R(isInj).durSpasmTA_sd],'omitnan'), ...
+               mean([R(isInj).durSpasmMG_sd],'omitnan')];
+SD_DUR = [sdDur_uninj; sdDur_spasm];
+
+%% ---- XCorr SD across recordings (needs per-recording curves) ----
+% Requires compare_files_xcorr to also return per-recording curves, OR recompute here.
+% If your compare_files_xcorr already returns XC matrices, use them. Otherwise see note below.
+sdXC_uninj = xcOut.sdU(:);
+sdXC_inj   = xcOut.sdS(:);
+
 %% ---- Single summary figure (4 subplots) ----
 figure('Name','Group comparison: SNR, PNR, Duration, XCorr');
 
 % ---------- SNR ----------
-subplot(1,4,1);
-bar(M_SNR);
+subplot(2,2,1);
+b = bar(M_SNR); hold on;
+
+% Bar centers for grouped bars:
+x = arrayfun(@(i) b(i).XEndPoints, 1:numel(b), 'UniformOutput', false);
+
+errorbar(x{1}, M_SNR(:,1), SD_SNR(:,1), ...
+    'Color', [1 1 1], ...   % white
+    'LineWidth', 3, ...     % thicker
+    'CapSize', 14, ...
+    'LineStyle', 'none'); 
+errorbar(x{2}, M_SNR(:,2), SD_SNR(:,2), ...
+    'Color', [1 1 1], ...   % white
+    'LineWidth', 3, ...     % thicker
+    'CapSize', 14, ...
+    'LineStyle', 'none'); 
+
 set(gca,'XTickLabel',{'Uninjured','Spastic'});
 legend({'TA','MG'},'Location','best');
 ylabel('Mean SNR (linear)');
 grid on;
 ylim([0 yMaxSNR]);
 title(sprintf(['Signal-to-Noise Ratio\n' ...
-    'Uninjured: TA %.2f  MG %.2f   |   Spastic: TA %.2f  MG %.2f'], ...
-    muSNR_uninj(1), muSNR_uninj(2), muSNR_inj(1), muSNR_inj(2)));
+    'Uninjured: TA %.2f±%.2f  MG %.2f±%.2f | Spastic: TA %.2f±%.2f  MG %.2f±%.2f'], ...
+    muSNR_uninj(1), sdSNR_uninj(1), muSNR_uninj(2), sdSNR_uninj(2), ...
+    muSNR_inj(1),   sdSNR_inj(1),   muSNR_inj(2),   sdSNR_inj(2)));
 
 % ---------- PNR ----------
-subplot(1,4,2);
-bar(M_PNR);
+subplot(2,2,2);
+b = bar(M_PNR); hold on;
+x = arrayfun(@(i) b(i).XEndPoints, 1:numel(b), 'UniformOutput', false);
+
+errorbar(x{1}, M_PNR(:,1), SD_PNR(:,1), ...
+    'Color', [1 1 1], ...   % white
+    'LineWidth', 3, ...     % thicker
+    'CapSize', 14, ...
+    'LineStyle', 'none'); 
+
+errorbar(x{2}, M_PNR(:,2), SD_PNR(:,2), ...
+    'Color', [1 1 1], ...   % white
+    'LineWidth', 3, ...     % thicker
+    'CapSize', 14, ...
+    'LineStyle', 'none'); 
+
 set(gca,'XTickLabel',{'Uninjured','Spastic'});
 legend({'TA','MG'},'Location','best');
 ylabel('Mean Peak-to-Noise Ratio');
 grid on;
 ylim([0 yMaxPNR]);
 title(sprintf(['Peak-to-Noise Ratio\n' ...
-    'Uninjured: TA %.2f  MG %.2f   |   Spastic: TA %.2f  MG %.2f'], ...
-    muPNR_uninj(1), muPNR_uninj(2), muPNR_inj(1), muPNR_inj(2)));
+    'Uninjured: TA %.2f±%.2f  MG %.2f±%.2f | Spastic: TA %.2f±%.2f  MG %.2f±%.2f'], ...
+    muPNR_uninj(1), sdPNR_uninj(1), muPNR_uninj(2), sdPNR_uninj(2), ...
+    muPNR_inj(1),   sdPNR_inj(1),   muPNR_inj(2),   sdPNR_inj(2)));
 
 % ---------- Duration ----------
-subplot(1,4,3);
-bar(M_DUR);
+subplot(2,2,3);
+b = bar(M_DUR); hold on;
+x = arrayfun(@(i) b(i).XEndPoints, 1:numel(b), 'UniformOutput', false);
+
+
+errorbar(x{1}, M_DUR(:,1), SD_DUR(:,1), ...
+    'Color', [1 1 1], ...   % white
+    'LineWidth', 3, ...     % thicker
+    'CapSize', 14, ...
+    'LineStyle', 'none'); 
+errorbar(x{2}, M_DUR(:,2), SD_DUR(:,2), ...
+    'Color', [1 1 1], ...   % white
+    'LineWidth', 3, ...     % thicker
+    'CapSize', 14, ...
+    'LineStyle', 'none'); 
+
 set(gca,'XTickLabel',{'Uninjured (normal)','Spastic (spasm)'});
 legend({'TA','MG'},'Location','best');
 ylabel('Contraction duration (s)');
 grid on;
 ylim([0 yMaxDur]);
 title(sprintf(['Contraction Duration\n' ...
-    'Uninjured (normal): TA %.3f  MG %.3f   |   Spastic (spasm): TA %.3f  MG %.3f'], ...
-    muDur_uninj(1), muDur_uninj(2), muDur_spasm(1), muDur_spasm(2)));
+    'Uninjured: TA %.3f±%.3f  MG %.3f±%.3f | Spastic: TA %.3f±%.3f  MG %.3f±%.3f'], ...
+    muDur_uninj(1), sdDur_uninj(1), muDur_uninj(2), sdDur_uninj(2), ...
+    muDur_spasm(1), sdDur_spasm(1), muDur_spasm(2), sdDur_spasm(2)));
 
 % ---------- Cross-correlation ----------
-subplot(1,4,4);
-plot(lags_ref, meanXC_uninj, 'LineWidth', 1.5); 
-hold on;
-plot(lags_ref, meanXC_inj,   'LineWidth', 1.5);
-grid on;
+subplot(2,2,4);
+hold on; grid on;
+
+% Uninjured CI band
+fill([lags_ref; flipud(lags_ref)], ...
+     [meanXC_uninj - ciU; flipud(meanXC_uninj + ciU)], ...
+     [0.7 0.7 0.7], 'FaceAlpha', 0.5, 'EdgeColor', 'none');
+
+% Spastic CI band (either across recs or within-spasm fallback)
+fill([lags_ref; flipud(lags_ref)], ...
+     [meanXC_inj - ciS; flipud(meanXC_inj + ciS)], ...
+     [1 1 1], 'FaceAlpha', 0.5, 'EdgeColor', 'none');
+
+% Mean curves (draw on top)
+hU = plot(lags_ref, meanXC_uninj, 'LineWidth', 1.8);
+hS = plot(lags_ref, meanXC_inj,   'LineWidth', 2.5);
+uistack(hS,'top');
+
 xlabel('Lag (s)');
 ylabel('Normalized xcorr');
-ylim([-yMaxXC yMaxXC]);
-title(sprintf(['TA–MG Cross-correlation (mean)\n' ...
-    'Uninjured: active | Spastic: mean over spasm segments | \\pm %.1f s'], max_lag_s));
-legend({'Uninjured mean','Spastic mean'}, 'Location','best');
 
+% y-lims should include CI
+yMaxXC = max([abs(meanXC_uninj)+abs(ciU); abs(meanXC_inj)+abs(ciS)], [], 'omitnan') * 1.1;
+if ~isfinite(yMaxXC) || yMaxXC<=0, yMaxXC=1; end
+ylim([-yMaxXC yMaxXC]);
+
+title(sprintf('TA–MG Cross-correlation (mean ± 95%% CI) | \\pm %.1f s', max_lag_s));
+legend({'Uninjured 95% CI', ciLabelS, 'Uninjured mean', 'Spastic mean'}, 'Location','best');
 
 %% =========================
 % Local functions
