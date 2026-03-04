@@ -99,6 +99,7 @@ t = seconds(TT.tDur);
 if options.plot_figures
     plot_filtered(TT.TA_f, TT.MG_f, TT.Ch3, t);
     plot_PSD(TT.TA, TT.TA_f, TT.MG, TT.MG_f);
+    
 end
 
 %% ---- Rectification + envelope ----
@@ -159,6 +160,8 @@ end
 if ~ismember('MG_rect', TT_clean.Properties.VariableNames)
     TT_clean.MG_rect = abs(TT_clean.MG_f);
 end
+disp(any(isnan(TT_clean.TA_rect(:))))
+disp(any(isinf(TT_clean.TA_rect(:))))
 
 % Recompute env on cleaned rect (always possible)
 TT_clean.TA_env = filtfilt(b, 1, TT_clean.TA_rect);
@@ -223,7 +226,40 @@ if options.plot_figures
     
     plot_filtered_labeled(TA_plot, MG_plot, TT_clean.Ch3, ...
         seconds(TT_clean.tDur), snrValue);
-end
+    % ---- Highlight TA∩MG overlap (both active) ----
+    ov = snrValue.is_act(:) & snrValue.is_act_MG(:);
+    
+    tsec = seconds(TT_clean.tDur);
+    
+    figure('Name','TA/MG activity overlap');
+    ax = axes; hold(ax,'on'); grid(ax,'on');
+    
+    % plot signals (same ones you used above)
+    plot(ax, tsec, TA_plot, 'DisplayName','TA');
+    plot(ax, tsec, MG_plot, 'DisplayName','MG');
+    
+    % shade overlap regions
+    yl = ylim(ax);
+    d = diff([false; ov; false]);
+    i0 = find(d==1);
+    i1 = find(d==-1)-1;
+    
+    for k = 1:numel(i0)
+        x0 = tsec(i0(k));
+        x1 = tsec(i1(k));
+        patch(ax, [x0 x1 x1 x0], [yl(1) yl(1) yl(2) yl(2)], ...
+            [1 0 0], 'FaceAlpha', 0.15, 'EdgeColor', 'none', ...
+            'DisplayName', ternary(k==1,'Overlap (TA & MG active)',''));
+    end
+    
+    % redraw on top (patch can affect limits)
+    uistack(findobj(ax,'Type','line'),'top');
+    
+    xlabel(ax,'Time (s)');
+    ylabel(ax,'Amplitude');
+    title(ax,'Overlap highlighted (TA & MG active)');
+
+    end
 
 %% ---- Save figures (optional) ----
 if options.plot_figures && options.save_figures
@@ -248,4 +284,8 @@ meta.is_rest_TA_unclean = is_rest_TA_unclean;
 meta.is_rest_MG_unclean = is_rest_MG_unclean;
 meta.bad_seg = bad_seg;
 
+end
+
+function s = ternary(cond, a, b)
+if cond, s = a; else, s = b; end
 end

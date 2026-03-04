@@ -39,7 +39,10 @@ R = struct( ...
     'durSpasmTA', NaN, 'durSpasmMG', NaN, ...
     'TA_env', [], 'MG_env', [], ...
     'TA_rect', [], 'MG_rect', [], ...
-    'is_act_TA', [], 'is_act_MG', [] );
+    'is_act_TA', [], 'is_act_MG', [], ...
+    'ovNormTA_MG', NaN, ...
+    'ovSpasmTA_MG', NaN, ...
+    'ovSpasmTA_MG_sd', NaN)
 R = repmat(R, nFiles, 1);
 
 %% ---- File selection + preprocess + metrics ----
@@ -109,12 +112,45 @@ for k = 1:nFiles
         peakMask = true(N,1);
     end
 
-    R(k).pnrTA = peak_to_noise_masked_peak(TTk.TA_rect, snrk.is_rest,     peakMask, 100);
-    R(k).pnrMG = peak_to_noise_masked_peak(TTk.MG_rect, snrk.is_rest_MG,  peakMask, 100);
+    R(k).pnrTA = peak_to_noise_masked_peak(TTk.TA_env, snrk.is_rest,     peakMask, 100);
+    R(k).pnrMG = peak_to_noise_masked_peak(TTk.MG_env, snrk.is_rest_MG,  peakMask, 100);
 
     %% ---- Contraction durations ----
     actTA = snrk.is_act(:);
     actMG = snrk.is_act_MG(:);
+
+    % ---- TA∩MG overlap duration ----
+    overlap = actTA & actMG;
+    
+    if groupk == "uninjured"
+        % mean overlap-bout duration over full recording
+        R(k).ovNormTA_MG = mean_bout_duration(overlap, fs);
+        R(k).ovSpasmTA_MG = NaN;
+        R(k).ovSpasmTA_MG_sd = NaN;
+    
+    elseif groupk == "injured"
+        R(k).ovNormTA_MG = NaN;
+    
+        if ~isempty(intervalsk)
+            nSp = size(intervalsk,1);
+            ov_each = nan(nSp,1);
+    
+            for ii = 1:nSp
+                mask_i = build_interval_mask(N, fs, intervalsk(ii,:));
+                if ~any(mask_i), continue; end
+                % mean overlap-bout duration within this spasm interval
+                ov_each(ii) = max_bout_duration(overlap & mask_i, fs);
+            end
+    
+            % bar height: mean across spasms
+            R(k).ovSpasmTA_MG = mean(ov_each, 'omitnan');
+            % error bar: SD between spasms (within-recording variability)
+            R(k).ovSpasmTA_MG_sd = std(ov_each, 0, 'omitnan');
+        else
+            R(k).ovSpasmTA_MG = NaN;
+            R(k).ovSpasmTA_MG_sd = NaN;
+        end
+    end
 
     if groupk == "uninjured"
         R(k).durNormTA  = mean_bout_duration(actTA, fs);
@@ -187,9 +223,42 @@ muDur_uninj = [mean([R(isUninj).durNormTA], 'omitnan'), mean([R(isUninj).durNorm
 muDur_spasm = [mean([R(isInj).durSpasmTA],  'omitnan'), mean([R(isInj).durSpasmMG],  'omitnan')];
 M_DUR = [muDur_uninj; muDur_spasm];
 
+% ---- Overlap duration comparison: Uninjured normal vs Spastic spasm ----
+muOv_uninj = mean([R(isUninj).ovNormTA_MG], 'omitnan');
+muOv_spasm = mean([R(isInj).ovSpasmTA_MG], 'omitnan');
+M_OV = [muOv_uninj; muOv_spasm];
+
+sdOv_uninj = std([R(isUninj).ovNormTA_MG], 0, 'omitnan');
+% injured SD: average within-recording SD across spasms (same philosophy as your spasm duration)
+sdOv_spasm = mean([R(isInj).ovSpasmTA_MG_sd], 'omitnan');
+SD_OV = [sdOv_uninj; sdOv_spasm];
+yMaxOv = max(M_OV(:), [], 'omitnan') * 1.1;  if ~isfinite(yMaxOv) || yMaxOv<=0, yMaxOv=1; end
+
+
 %% ---- Cross-correlation: NO UI, reuse R ----
 xcOut = compare_files_xcorr(fs, max_lag_s, 'R', R, 'UseEnvelope', true, ...
     'GroupUninj', "uninjured", 'GroupSpastic', "injured");
+RecCurves = xcOut.RecCurves;
+
+nRec = numel(RecCurves);
+peakLag = nan(nRec,1);
+
+for i = 1:nRec
+    xc_i = RecCurves(i).xc;
+    lags_i = RecCurves(i).lags_s;
+
+    if any(isfinite(xc_i))
+        [~, idx] = max(xc_i);   % or max(abs(xc_i))
+        peakLag(i) = lags_i(idx);
+    end
+end
+
+groups = lower(string({RecCurves.group}));
+isUninj = groups == "uninjured";
+isInj   = groups == "injured";
+
+peak_uninj = peakLag(isUninj);
+peak_inj   = peakLag(isInj);
 
 lags_ref     = xcOut.lags_s(:);
 meanXC_uninj = xcOut.meanU(:);
@@ -250,7 +319,7 @@ sdXC_inj   = xcOut.sdS(:);
 figure('Name','Group comparison: SNR, PNR, Duration, XCorr');
 
 % ---------- SNR ----------
-subplot(2,2,1);
+subplot(3,2,1);
 b = bar(M_SNR); hold on;
 
 % Bar centers for grouped bars:
@@ -278,7 +347,7 @@ title(sprintf(['Signal-to-Noise Ratio\n' ...
     muSNR_inj(1),   sdSNR_inj(1),   muSNR_inj(2),   sdSNR_inj(2)));
 
 % ---------- PNR ----------
-subplot(2,2,2);
+subplot(3,2,2);
 b = bar(M_PNR); hold on;
 x = arrayfun(@(i) b(i).XEndPoints, 1:numel(b), 'UniformOutput', false);
 
@@ -305,7 +374,7 @@ title(sprintf(['Peak-to-Noise Ratio\n' ...
     muPNR_inj(1),   sdPNR_inj(1),   muPNR_inj(2),   sdPNR_inj(2)));
 
 % ---------- Duration ----------
-subplot(2,2,3);
+subplot(3,2,3);
 b = bar(M_DUR); hold on;
 x = arrayfun(@(i) b(i).XEndPoints, 1:numel(b), 'UniformOutput', false);
 
@@ -332,8 +401,8 @@ title(sprintf(['Contraction Duration\n' ...
     muDur_spasm(1), sdDur_spasm(1), muDur_spasm(2), sdDur_spasm(2)));
 
 % ---------- Cross-correlation ----------
-subplot(2,2,4);
-hold on; grid on;
+subplot(3,2,4);
+hold on; grid on; box on;
 
 % Uninjured CI band
 fill([lags_ref; flipud(lags_ref)], ...
@@ -351,7 +420,7 @@ hS = plot(lags_ref, meanXC_inj,   'LineWidth', 2.5);
 uistack(hS,'top');
 
 xlabel('Lag (s)');
-ylabel('Normalized xcorr');
+ylabel('Correlation');
 
 % y-lims should include CI
 yMaxXC = max([abs(meanXC_uninj)+abs(ciU); abs(meanXC_inj)+abs(ciS)], [], 'omitnan') * 1.1;
@@ -360,6 +429,46 @@ ylim([-yMaxXC yMaxXC]);
 
 title(sprintf('TA–MG Cross-correlation (mean ± 95%% CI) | \\pm %.1f s', max_lag_s));
 legend({'Uninjured 95% CI', ciLabelS, 'Uninjured mean', 'Spastic mean'}, 'Location','best');
+
+muPeak = [mean(peak_uninj,'omitnan'), ...
+          mean(peak_inj,'omitnan')];
+
+sdPeak = [std(peak_uninj,0,'omitnan'), ...
+          std(peak_inj,0,'omitnan')];
+
+subplot(3,2,5); 
+b = bar(muPeak); hold on;
+
+x = b.XEndPoints;
+
+errorbar(x, muPeak, sdPeak, ...
+    'Color',[1 1 1], ...
+    'LineWidth',3, ...
+    'CapSize',14, ...
+    'LineStyle','none');
+
+set(gca,'XTickLabel',{'Uninjured','Spastic'});
+ylabel('Lag at peak xcorr (s)');
+title('TA–MG cross-correlation peak lag');
+grid on;
+
+subplot(3, 2, 6)
+b = bar(M_OV); hold on;
+x = b.XEndPoints;
+
+errorbar(x, M_OV, SD_OV, ...
+    'Color', [1 1 1], ...
+    'LineWidth', 3, ...
+    'CapSize', 14, ...
+    'LineStyle', 'none');
+
+set(gca,'XTickLabel',{'Uninjured (normal)','Spastic (spasm)'});
+ylabel('TA∩MG overlap bout duration (s)');
+grid on;
+ylim([0 yMaxOv]);
+title(sprintf('TA & MG overlap duration for spasms and healthy gait'));
+exportgraphics(gcf, 'myplot.pdf', 'ContentType', 'vector')
+
 
 %% =========================
 % Local functions
@@ -433,3 +542,4 @@ for k = 1:size(intervals,1)
     end
 end
 end
+

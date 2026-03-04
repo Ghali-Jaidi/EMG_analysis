@@ -18,8 +18,8 @@ arguments
 end
 
 % Artifact thresholds: 10x the typical active RMS per channel
-artifact_thr_TA = snrValue.Ract_TA * 50;
-artifact_thr_MG = snrValue.Ract_MG * 50;
+artifact_thr_TA = snrValue.Ract_TA * 5000;
+artifact_thr_MG = snrValue.Ract_MG * 5000;
 
 fprintf('Artifact thresholds  ->  TA: %.4f   MG: %.4f\n', ...
     artifact_thr_TA, artifact_thr_MG);

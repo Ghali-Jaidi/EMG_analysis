@@ -117,6 +117,7 @@ if isempty(Rin)
         'Axes', ax, 'Color', colors(i,:), 'Label', char(RecCurves(i).label));
     end
     grid(ax,'on');
+    box(ax, 'on')
     xlabel(ax,'Lag (s)'); ylabel(ax,'Normalized xcorr');
     title(ax, sprintf('TA–MG cross-correlation | \\pm %.1f s | %s', max_lag_s, ternary(use_env,"env*sign(filt)","filtered")));
     legend(ax,'Location','best');
@@ -175,6 +176,7 @@ out.ciS_within = 1.96 * out.sdS_seg ./ sqrt(max(out.nSeg,1));
 
 out.n_uninj_used = size(XU, 1);            % # recordings used
 out.n_spas_used  = size(XS, 1);
+out.RecCurves = RecCurves;
 
 out.UseEnvelope = use_env;
 out.settings = struct( ...
