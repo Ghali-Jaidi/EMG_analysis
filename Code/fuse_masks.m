@@ -12,7 +12,7 @@ function mask_fused = fuse_masks(mask, fs, max_gap_ms)
 arguments
     mask (:,1) logical
     fs (1,1) double {mustBePositive} = 10000
-    max_gap_ms (1,1) double {mustBePositive} = 50
+    max_gap_ms (1,1) double {mustBePositive} = 30
 end
 
 max_gap_samples = round(max_gap_ms / 1000 * fs);
