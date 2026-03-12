@@ -1,528 +1,373 @@
 %% =========================
-% Batch preprocessing + group comparisons (single summary figure with 4 subplots)
-%   1) SNR (TA/MG): Uninjured vs Spastic
-%   2) PNR (TA/MG): Uninjured vs Spastic
-%       - Uninjured: peak over full recording
-%       - Spastic: peak restricted to user spasm intervals (if provided)
-%   3) Contraction duration (TA/MG):
-%       - Uninjured: mean bout duration during normal active (all recording)
-%       - Spastic: longest bout duration during spasm intervals
-%   4) TA–MG cross-correlation (group mean curve):
-%       - Uninjured: per-recording xcorr on active samples (is_act_TA OR is_act_MG)
-%       - Spastic: per-recording xcorr averaged over spasm segments (intervals),
-%                  then averaged across recordings
-%
-% Requires on path:
-%   - preprocess_and_label.m
-%   - ask_condition_and_intervals.m   (separate file, already)
-%   - compare_files_xcorr_avg.m       (the modular version that accepts 'R')
+% Master analysis script
 %% =========================
+clear; clc;
 
 fs = 10000;
 max_lag_s = 2.0;
 
-%% ---- Number of recordings ----
-answer = inputdlg('How many experiment MAT files do you want to process?', ...
-                  'Number of recordings', [1 50], {'2'});
-if isempty(answer), error('Selection cancelled.'); end
+%% ---- Ask user what to run ----
+ans1 = questdlg('Do you want to run the comparison between injured and uninjured mice?', ...
+    'Group comparison', 'Yes', 'No', 'Yes');
+run_group_compare = strcmp(ans1, 'Yes');
 
-nFiles = str2double(answer{1});
-if isnan(nFiles) || nFiles <= 0, error('Invalid number of files.'); end
+ans2 = questdlg('Do you want to run the comparison between stim ON and stim OFF?', ...
+    'Stim ON/OFF comparison', 'Yes', 'No', 'Yes');
+run_stim_compare = strcmp(ans2, 'Yes');
 
-%% ---- Preallocate ----
-R = struct( ...
-    'file', "", 'fullFile', "", 'recID', NaN, ...
-    'cond', "", 'group', "", 'intervals', [], ...
-    'snrTA', NaN, 'snrMG', NaN, ...
-    'pnrTA', NaN, 'pnrMG', NaN, ...
-    'durNormTA', NaN, 'durNormMG', NaN, ...
-    'durSpasmTA', NaN, 'durSpasmMG', NaN, ...
-    'TA_env', [], 'MG_env', [], ...
-    'TA_rect', [], 'MG_rect', [], ...
-    'is_act_TA', [], 'is_act_MG', [], ...
-    'ovNormTA_MG', NaN, ...
-    'ovSpasmTA_MG', NaN, ...
-    'ovSpasmTA_MG_sd', NaN)
-R = repmat(R, nFiles, 1);
+if ~run_group_compare && ~run_stim_compare
+    error('Nothing selected.');
+end
 
-%% ---- File selection + preprocess + metrics ----
-for k = 1:nFiles
+%% ============================================================
+%  PART 1 — Injured vs Uninjured comparison
+%% ============================================================
+if run_group_compare
 
-    msg = sprintf([ ...
-        'Select recording %d of %d.\n\n' ...
-        'Select ONE experiment MAT file.\n' ...
-        'Preprocessing will start after selection.'], ...
-        k, nFiles);
-    uiwait(msgbox(msg,'Select experiment file','modal'));
+    answer = inputdlg('How many experiment MAT files do you want to process for injured/uninjured comparison?', ...
+                      'Number of recordings', [1 60], {'2'});
+    if isempty(answer), error('Selection cancelled.'); end
 
-    [f,p] = uigetfile('*.mat', sprintf('Select experiment MAT file (%d/%d)', k, nFiles));
-    if isequal(f,0), error('File selection cancelled.'); end
-
-    fullFile = fullfile(p,f);
-    fprintf('\n=== [%d/%d] Processing: %s ===\n', k, nFiles, fullFile);
-
-    [TTk, snrk, metak] = preprocess_and_label(fs, ...
-        'fullFile', fullFile, ...
-        'plot_figures', false, ...
-        'save_figures', false);
-
-    tag = sprintf('%s (rec %d)', f, metak.recID);
-    [condk, intervalsk] = ask_condition_and_intervals(tag);
-
-    if strcmpi(condk,'Spastic')
-        groupk = "injured";
-    elseif strcmpi(condk,'Uninjured')
-        groupk = "uninjured";
-    else
-        groupk = lower(string(condk));
+    nFiles = str2double(answer{1});
+    if isnan(nFiles) || nFiles <= 0
+        error('Invalid number of files.');
     end
 
-    R(k).file      = string(f);
-    R(k).fullFile  = string(fullFile);
-    R(k).recID     = metak.recID;
-    R(k).cond      = string(condk);
-    R(k).group     = groupk;
-    R(k).intervals = intervalsk;
+    %% ---- Preallocate ----
+    R = struct( ...
+        'file', "", 'fullFile', "", 'recID', NaN, ...
+        'cond', "", 'group', "", 'intervals', [], ...
+        'snrTA', NaN, 'snrMG', NaN, ...
+        'pnrTA', NaN, 'pnrMG', NaN, ...
+        'durNormTA', NaN, 'durNormMG', NaN, ...
+        'durSpasmTA', NaN, 'durSpasmMG', NaN, ...
+        'durSpasmTA_sd', NaN, 'durSpasmMG_sd', NaN, ...
+        'TA_env', [], 'MG_env', [], ...
+        'TA_rect', [], 'MG_rect', [], ...
+        'is_act_TA', [], 'is_act_MG', [], ...
+        'ovNormTA_MG', NaN, ...
+        'ovSpasmTA_MG', NaN, ...
+        'ovSpasmTA_MG_sd', NaN);
+    R = repmat(R, nFiles, 1);
 
-    N = height(TTk);
+    %% ---- File selection + preprocess + metrics ----
+    for k = 1:nFiles
 
-    %% ---- Save xcorr inputs for later (no UI / no reprocessing) ----
-    R(k).TA_env   = TTk.TA_env(:);
-    R(k).MG_env   = TTk.MG_env(:);
-    R(k).TA_rect  = TTk.TA_rect(:);
-    R(k).MG_rect  = TTk.MG_rect(:);
-    R(k).is_act_TA = snrk.is_act(:);
-    R(k).is_act_MG = snrk.is_act_MG(:);
+        msg = sprintf(['Select recording %d of %d for injured/uninjured comparison.\n' ...
+                       'Select ONE experiment MAT file.'], k, nFiles);
+        uiwait(msgbox(msg, 'Select experiment file', 'modal'));
 
-    %% ---- SNR ----
-    R(k).snrTA = snrk.SNR_TA;
-    R(k).snrMG = snrk.SNR_MG;
+        [f,p] = uigetfile('*.mat', sprintf('Select experiment MAT file (%d/%d)', k, nFiles));
+        if isequal(f,0), error('File selection cancelled.'); end
 
-    %% ---- Interval mask (clean timeline) ----
-    if ~isempty(intervalsk)
-        spasmWin = build_interval_mask(N, fs, intervalsk);
-    else
-        spasmWin = false(N,1);
-    end
+        fullFile = fullfile(p,f);
+        fprintf('\n=== [%d/%d] Processing: %s ===\n', k, nFiles, fullFile);
 
-    %% ---- PNR (rectified; no envelope) ----
-    if groupk == "injured" && any(spasmWin)
-        peakMask = spasmWin;
-    else
-        peakMask = true(N,1);
-    end
+        [TTk, snrk, metak] = preprocess_and_label(fs, ...
+            'fullFile', fullFile, ...
+            'plot_figures', false, ...
+            'save_figures', false);
 
-    R(k).pnrTA = peak_to_noise_masked_peak(TTk.TA_env, snrk.is_rest,     peakMask, 100);
-    R(k).pnrMG = peak_to_noise_masked_peak(TTk.MG_env, snrk.is_rest_MG,  peakMask, 100);
+        tag = sprintf('%s (rec %d)', f, metak.recID);
+        [condk, intervalsk] = ask_condition_and_intervals(tag);
 
-    %% ---- Contraction durations ----
-    actTA = snrk.is_act(:);
-    actMG = snrk.is_act_MG(:);
-
-    % ---- TA∩MG overlap duration ----
-    overlap = actTA & actMG;
-    
-    if groupk == "uninjured"
-        % mean overlap-bout duration over full recording
-        R(k).ovNormTA_MG = mean_bout_duration(overlap, fs);
-        R(k).ovSpasmTA_MG = NaN;
-        R(k).ovSpasmTA_MG_sd = NaN;
-    
-    elseif groupk == "injured"
-        R(k).ovNormTA_MG = NaN;
-    
-        if ~isempty(intervalsk)
-            nSp = size(intervalsk,1);
-            ov_each = nan(nSp,1);
-    
-            for ii = 1:nSp
-                mask_i = build_interval_mask(N, fs, intervalsk(ii,:));
-                if ~any(mask_i), continue; end
-                % mean overlap-bout duration within this spasm interval
-                ov_each(ii) = max_bout_duration(overlap & mask_i, fs);
-            end
-    
-            % bar height: mean across spasms
-            R(k).ovSpasmTA_MG = mean(ov_each, 'omitnan');
-            % error bar: SD between spasms (within-recording variability)
-            R(k).ovSpasmTA_MG_sd = std(ov_each, 0, 'omitnan');
+        if strcmpi(condk,'Spastic')
+            groupk = "injured";
+        elseif strcmpi(condk,'Uninjured')
+            groupk = "uninjured";
         else
-            R(k).ovSpasmTA_MG = NaN;
-            R(k).ovSpasmTA_MG_sd = NaN;
+            groupk = lower(string(condk));
+        end
+
+        R(k).file      = string(f);
+        R(k).fullFile  = string(fullFile);
+        R(k).recID     = metak.recID;
+        R(k).cond      = string(condk);
+        R(k).group     = groupk;
+        R(k).intervals = intervalsk;
+
+        N = height(TTk);
+
+        R(k).TA_env    = TTk.TA_env(:);
+        R(k).MG_env    = TTk.MG_env(:);
+        R(k).TA_rect   = TTk.TA_rect(:);
+        R(k).MG_rect   = TTk.MG_rect(:);
+        R(k).is_act_TA = snrk.is_act(:);
+        R(k).is_act_MG = snrk.is_act_MG(:);
+
+        R(k).snrTA = snrk.SNR_TA;
+        R(k).snrMG = snrk.SNR_MG;
+
+        if ~isempty(intervalsk)
+            spasmWin = build_interval_mask(N, fs, intervalsk);
+        else
+            spasmWin = false(N,1);
+        end
+
+        if groupk == "injured" && any(spasmWin)
+            peakMask = spasmWin;
+        else
+            peakMask = true(N,1);
+        end
+
+        R(k).pnrTA = peak_to_noise_masked_peak(TTk.TA_env, snrk.is_rest,    peakMask, 100);
+        R(k).pnrMG = peak_to_noise_masked_peak(TTk.MG_env, snrk.is_rest_MG, peakMask, 100);
+
+        actTA = snrk.is_act(:);
+        actMG = snrk.is_act_MG(:);
+        overlap = actTA & actMG;
+
+        if groupk == "uninjured"
+            R(k).ovNormTA_MG = mean_bout_duration(overlap, fs);
+            R(k).durNormTA   = mean_bout_duration(actTA, fs);
+            R(k).durNormMG   = mean_bout_duration(actMG, fs);
+
+        elseif groupk == "injured"
+            if ~isempty(intervalsk)
+                nSp = size(intervalsk,1);
+                ov_each    = nan(nSp,1);
+                durTA_each = nan(nSp,1);
+                durMG_each = nan(nSp,1);
+
+                for ii = 1:nSp
+                    mask_i = build_interval_mask(N, fs, intervalsk(ii,:));
+                    if ~any(mask_i), continue; end
+
+                    ov_each(ii)    = max_bout_duration(overlap & mask_i, fs);
+                    durTA_each(ii) = max_bout_duration(actTA & mask_i, fs);
+                    durMG_each(ii) = max_bout_duration(actMG & mask_i, fs);
+                end
+
+                R(k).ovSpasmTA_MG    = mean(ov_each, 'omitnan');
+                R(k).ovSpasmTA_MG_sd = std(ov_each, 0, 'omitnan');
+
+                R(k).durSpasmTA    = mean(durTA_each, 'omitnan');
+                R(k).durSpasmMG    = mean(durMG_each, 'omitnan');
+                R(k).durSpasmTA_sd = std(durTA_each, 0, 'omitnan');
+                R(k).durSpasmMG_sd = std(durMG_each, 0, 'omitnan');
+            end
         end
     end
 
-    if groupk == "uninjured"
-        R(k).durNormTA  = mean_bout_duration(actTA, fs);
-        R(k).durNormMG  = mean_bout_duration(actMG, fs);
-        R(k).durSpasmTA = NaN;
-        R(k).durSpasmMG = NaN;
+    %% ---- Group masks ----
+    groups = lower(string({R.group}));
+    isUninj = groups == "uninjured";
+    isInj   = groups == "injured";
+    assert(any(isUninj) && any(isInj), "Need at least one Uninjured and one Spastic recording.");
 
-    elseif groupk == "injured"
+    %% ---- Group means / SDs ----
+    muSNR_uninj = [mean([R(isUninj).snrTA], 'omitnan'), mean([R(isUninj).snrMG], 'omitnan')];
+    muSNR_inj   = [mean([R(isInj).snrTA],   'omitnan'), mean([R(isInj).snrMG],   'omitnan')];
+    M_SNR = [muSNR_uninj; muSNR_inj];
 
-        R(k).durNormTA  = NaN;
-        R(k).durNormMG  = NaN;
-    
-        if ~isempty(intervalsk)
-    
-            nSp = size(intervalsk,1);
-            durTA_each = nan(nSp,1);
-            durMG_each = nan(nSp,1);
-    
-            for ii = 1:nSp
-                mask_i = build_interval_mask(N, fs, intervalsk(ii,:));
-    
-                if ~any(mask_i), continue; end
-    
-                durTA_each(ii) = max_bout_duration(actTA & mask_i, fs);
-                durMG_each(ii) = max_bout_duration(actMG & mask_i, fs);
-            end
-    
-            % Bar height (mean of per-spasm maxima)
-            R(k).durSpasmTA = mean(durTA_each, 'omitnan');
-            R(k).durSpasmMG = mean(durMG_each, 'omitnan');
-    
-            % SD between spasms (for error bars)
-            R(k).durSpasmTA_sd = std(durTA_each, 0, 'omitnan');
-            R(k).durSpasmMG_sd = std(durMG_each, 0, 'omitnan');
-    
-        else
-            R(k).durSpasmTA = NaN;
-            R(k).durSpasmMG = NaN;
-            R(k).durSpasmTA_sd = NaN;
-            R(k).durSpasmMG_sd = NaN;
+    sdSNR_uninj = [std([R(isUninj).snrTA], 0, 'omitnan'), std([R(isUninj).snrMG], 0, 'omitnan')];
+    sdSNR_inj   = [std([R(isInj).snrTA],   0, 'omitnan'), std([R(isInj).snrMG],   0, 'omitnan')];
+    SD_SNR = [sdSNR_uninj; sdSNR_inj];
+
+    muPNR_uninj = [mean([R(isUninj).pnrTA], 'omitnan'), mean([R(isUninj).pnrMG], 'omitnan')];
+    muPNR_inj   = [mean([R(isInj).pnrTA],   'omitnan'), mean([R(isInj).pnrMG],   'omitnan')];
+    M_PNR = [muPNR_uninj; muPNR_inj];
+
+    sdPNR_uninj = [std([R(isUninj).pnrTA], 0, 'omitnan'), std([R(isUninj).pnrMG], 0, 'omitnan')];
+    sdPNR_inj   = [std([R(isInj).pnrTA],   0, 'omitnan'), std([R(isInj).pnrMG],   0, 'omitnan')];
+    SD_PNR = [sdPNR_uninj; sdPNR_inj];
+
+    muDur_uninj = [mean([R(isUninj).durNormTA], 'omitnan'), mean([R(isUninj).durNormMG], 'omitnan')];
+    muDur_spasm = [mean([R(isInj).durSpasmTA],  'omitnan'), mean([R(isInj).durSpasmMG],  'omitnan')];
+    M_DUR = [muDur_uninj; muDur_spasm];
+
+    sdDur_uninj = [std([R(isUninj).durNormTA], 0, 'omitnan'), std([R(isUninj).durNormMG], 0, 'omitnan')];
+    sdDur_spasm = [mean([R(isInj).durSpasmTA_sd],'omitnan'), mean([R(isInj).durSpasmMG_sd],'omitnan')];
+    SD_DUR = [sdDur_uninj; sdDur_spasm];
+
+    muOv_uninj = mean([R(isUninj).ovNormTA_MG], 'omitnan');
+    muOv_spasm = mean([R(isInj).ovSpasmTA_MG], 'omitnan');
+    M_OV = [muOv_uninj; muOv_spasm];
+
+    sdOv_uninj = std([R(isUninj).ovNormTA_MG], 0, 'omitnan');
+    sdOv_spasm = mean([R(isInj).ovSpasmTA_MG_sd], 'omitnan');
+    SD_OV = [sdOv_uninj; sdOv_spasm];
+
+    %% ---- Cross-correlation ----
+    xcOut = compare_files_xcorr(fs, max_lag_s, 'R', R, 'UseEnvelope', true, ...
+        'GroupUninj', "uninjured", 'GroupSpastic', "injured");
+
+    RecCurves = xcOut.RecCurves;
+    nRec = numel(RecCurves);
+    peakLag = nan(nRec,1);
+
+    for i = 1:nRec
+        xc_i = RecCurves(i).xc;
+        lags_i = RecCurves(i).lags_s;
+        if any(isfinite(xc_i))
+            [~, idx] = max(xc_i);
+            peakLag(i) = lags_i(idx);
         end
-    
+    end
+
+    groupsXC = lower(string({RecCurves.group}));
+    isUninjXC = groupsXC == "uninjured";
+    isInjXC   = groupsXC == "injured";
+
+    peak_uninj = peakLag(isUninjXC);
+    peak_inj   = peakLag(isInjXC);
+
+    lags_ref     = xcOut.lags_s(:);
+    meanXC_uninj = xcOut.meanU(:);
+    sdXC_uninj   = xcOut.sdU(:);
+    nU           = xcOut.n_uninj_used;
+
+    meanXC_inj = xcOut.meanS(:);
+    nS         = xcOut.n_spas_used;
+    z = 1.96;
+    ciU = z * (sdXC_uninj ./ sqrt(max(nU,1)));
+
+    if isfield(xcOut,'ciS_within') && nS < 2 && isfield(xcOut,'meanS_seg')
+        meanXC_inj = xcOut.meanS_seg(:);
+        ciS        = xcOut.ciS_within(:);
+        ciLabelS   = sprintf('Spastic 95%% CI within spasms (nSeg=%d)', xcOut.nSeg);
     else
-            R(k).durNormTA  = mean_bout_duration(actTA, fs);
-            R(k).durNormMG  = mean_bout_duration(actMG, fs);
-            R(k).durSpasmTA = NaN;
-            R(k).durSpasmMG = NaN;
+        sdXC_inj = xcOut.sdS(:);
+        ciS      = z * (sdXC_inj ./ sqrt(max(nS,1)));
+        ciLabelS = sprintf('Spastic 95%% CI across recs (n=%d)', nS);
     end
 
+    %% ---- Plot ----
+    yMaxSNR = max(M_SNR(:), [], 'omitnan') * 1.1; if ~isfinite(yMaxSNR) || yMaxSNR<=0, yMaxSNR=1; end
+    yMaxPNR = max(M_PNR(:), [], 'omitnan') * 1.1; if ~isfinite(yMaxPNR) || yMaxPNR<=0, yMaxPNR=1; end
+    yMaxDur = max(M_DUR(:), [], 'omitnan') * 1.1; if ~isfinite(yMaxDur) || yMaxDur<=0, yMaxDur=1; end
+    yMaxOv  = max(M_OV(:),  [], 'omitnan') * 1.1; if ~isfinite(yMaxOv)  || yMaxOv<=0,  yMaxOv=1;  end
+    yMaxXC  = max([abs(meanXC_uninj)+abs(ciU); abs(meanXC_inj)+abs(ciS)], [], 'omitnan') * 1.1;
+    if ~isfinite(yMaxXC) || yMaxXC<=0, yMaxXC=1; end
+
+    figure('Name','Group comparison: SNR, PNR, Duration, XCorr');
+
+    subplot(3,2,1);
+    b = bar(M_SNR); hold on;
+    x = arrayfun(@(i) b(i).XEndPoints, 1:numel(b), 'UniformOutput', false);
+    errorbar(x{1}, M_SNR(:,1), SD_SNR(:,1), 'w', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
+    errorbar(x{2}, M_SNR(:,2), SD_SNR(:,2), 'w', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
+    set(gca,'XTickLabel',{'Uninjured','Spastic'}); legend({'TA','MG'},'Location','best');
+    ylabel('Mean SNR (linear)'); grid on; ylim([0 yMaxSNR]); title('Signal-to-Noise Ratio');
+
+    subplot(3,2,2);
+    b = bar(M_PNR); hold on;
+    x = arrayfun(@(i) b(i).XEndPoints, 1:numel(b), 'UniformOutput', false);
+    errorbar(x{1}, M_PNR(:,1), SD_PNR(:,1), 'w', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
+    errorbar(x{2}, M_PNR(:,2), SD_PNR(:,2), 'w', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
+    set(gca,'XTickLabel',{'Uninjured','Spastic'}); legend({'TA','MG'},'Location','best');
+    ylabel('Mean Peak-to-Noise Ratio'); grid on; ylim([0 yMaxPNR]); title('Peak-to-Noise Ratio');
+
+    subplot(3,2,3);
+    b = bar(M_DUR); hold on;
+    x = arrayfun(@(i) b(i).XEndPoints, 1:numel(b), 'UniformOutput', false);
+    errorbar(x{1}, M_DUR(:,1), SD_DUR(:,1), 'w', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
+    errorbar(x{2}, M_DUR(:,2), SD_DUR(:,2), 'w', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
+    set(gca,'XTickLabel',{'Uninjured (normal)','Spastic (spasm)'}); legend({'TA','MG'},'Location','best');
+    ylabel('Contraction duration (s)'); grid on; ylim([0 yMaxDur]); title('Contraction Duration');
+
+    subplot(3,2,4); hold on; grid on; box on;
+    fill([lags_ref; flipud(lags_ref)], [meanXC_uninj-ciU; flipud(meanXC_uninj+ciU)], [0.7 0.7 0.7], 'FaceAlpha', 0.5, 'EdgeColor', 'none');
+    fill([lags_ref; flipud(lags_ref)], [meanXC_inj-ciS; flipud(meanXC_inj+ciS)], [1 1 1], 'FaceAlpha', 0.5, 'EdgeColor', 'none');
+    plot(lags_ref, meanXC_uninj, 'LineWidth', 1.8);
+    plot(lags_ref, meanXC_inj, 'LineWidth', 2.5);
+    xlabel('Lag (s)'); ylabel('Correlation'); ylim([-yMaxXC yMaxXC]);
+    title(sprintf('TA–MG Cross-correlation (mean ± 95%% CI) | \\pm %.1f s', max_lag_s));
+    legend({'Uninjured 95% CI', ciLabelS, 'Uninjured mean', 'Spastic mean'}, 'Location','best');
+
+    subplot(3,2,5);
+    muPeak = [mean(peak_uninj,'omitnan'), mean(peak_inj,'omitnan')];
+    sdPeak = [std(peak_uninj,0,'omitnan'), std(peak_inj,0,'omitnan')];
+    b = bar(muPeak); hold on;
+    errorbar(b.XEndPoints, muPeak, sdPeak, 'w', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
+    set(gca,'XTickLabel',{'Uninjured','Spastic'}); ylabel('Lag at peak xcorr (s)');
+    title('TA–MG cross-correlation peak lag'); grid on;
+
+    subplot(3,2,6);
+    b = bar(M_OV); hold on;
+    errorbar(b.XEndPoints, M_OV, SD_OV, 'w', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
+    set(gca,'XTickLabel',{'Uninjured (normal)','Spastic (spasm)'});
+    ylabel('TA∩MG overlap bout duration (s)'); grid on; ylim([0 yMaxOv]);
+    title('TA & MG overlap duration');
+
+    exportgraphics(gcf, 'group_comparison.pdf', 'ContentType', 'vector');
 end
 
-%% ---- Group masks ----
-groups = lower(string({R.group}));
-isUninj = groups == "uninjured";
-isInj   = groups == "injured";
-assert(any(isUninj) && any(isInj), "Need at least one Uninjured and one Spastic recording.");
+%% ============================================================
+%  PART 2 — Stim ON vs Stim OFF comparison
+%% ============================================================
+if run_stim_compare
 
-%% ---- Group means: SNR ----
-muSNR_uninj = [mean([R(isUninj).snrTA], 'omitnan'), mean([R(isUninj).snrMG], 'omitnan')];
-muSNR_inj   = [mean([R(isInj).snrTA],   'omitnan'), mean([R(isInj).snrMG],   'omitnan')];
-M_SNR = [muSNR_uninj; muSNR_inj];
+    answer = inputdlg('How many experiment MAT files do you want to process for stim ON/OFF analysis?', ...
+                      'Number of recordings', [1 60], {'2'});
+    if isempty(answer), error('Selection cancelled.'); end
 
-%% ---- Group means: PNR ----
-muPNR_uninj = [mean([R(isUninj).pnrTA], 'omitnan'), mean([R(isUninj).pnrMG], 'omitnan')];
-muPNR_inj   = [mean([R(isInj).pnrTA],   'omitnan'), mean([R(isInj).pnrMG],   'omitnan')];
-M_PNR = [muPNR_uninj; muPNR_inj];
-
-%% ---- Duration comparison: Uninjured normal vs Spastic spasm ----
-muDur_uninj = [mean([R(isUninj).durNormTA], 'omitnan'), mean([R(isUninj).durNormMG], 'omitnan')];
-muDur_spasm = [mean([R(isInj).durSpasmTA],  'omitnan'), mean([R(isInj).durSpasmMG],  'omitnan')];
-M_DUR = [muDur_uninj; muDur_spasm];
-
-% ---- Overlap duration comparison: Uninjured normal vs Spastic spasm ----
-muOv_uninj = mean([R(isUninj).ovNormTA_MG], 'omitnan');
-muOv_spasm = mean([R(isInj).ovSpasmTA_MG], 'omitnan');
-M_OV = [muOv_uninj; muOv_spasm];
-
-sdOv_uninj = std([R(isUninj).ovNormTA_MG], 0, 'omitnan');
-% injured SD: average within-recording SD across spasms (same philosophy as your spasm duration)
-sdOv_spasm = mean([R(isInj).ovSpasmTA_MG_sd], 'omitnan');
-SD_OV = [sdOv_uninj; sdOv_spasm];
-yMaxOv = max(M_OV(:), [], 'omitnan') * 1.1;  if ~isfinite(yMaxOv) || yMaxOv<=0, yMaxOv=1; end
-
-
-%% ---- Cross-correlation: NO UI, reuse R ----
-xcOut = compare_files_xcorr(fs, max_lag_s, 'R', R, 'UseEnvelope', true, ...
-    'GroupUninj', "uninjured", 'GroupSpastic', "injured");
-RecCurves = xcOut.RecCurves;
-
-nRec = numel(RecCurves);
-peakLag = nan(nRec,1);
-
-for i = 1:nRec
-    xc_i = RecCurves(i).xc;
-    lags_i = RecCurves(i).lags_s;
-
-    if any(isfinite(xc_i))
-        [~, idx] = max(xc_i);   % or max(abs(xc_i))
-        peakLag(i) = lags_i(idx);
+    nStimFiles = str2double(answer{1});
+    if isnan(nStimFiles) || nStimFiles <= 0
+        error('Invalid number of files.');
     end
+
+    MG_signals = {};
+    Ch3_signals = {};
+
+    for k = 1:nStimFiles
+        msg = sprintf(['Select recording %d of %d for stim ON/OFF comparison.\n' ...
+                       'Select ONE experiment MAT file.'], k, nStimFiles);
+        uiwait(msgbox(msg, 'Select experiment file', 'modal'));
+
+        [f,p] = uigetfile('*.mat', sprintf('Select experiment MAT file (%d/%d)', k, nStimFiles));
+        if isequal(f,0), error('File selection cancelled.'); end
+
+        fullFile = fullfile(p,f);
+        fprintf('\n=== [%d/%d] Stim analysis: %s ===\n', k, nStimFiles, fullFile);
+        P = default_emg_parameters();
+        [TTk, ~, metak] = preprocess_and_label(P, fs, ...
+            'fullFile', fullFile, ...
+            'plot_figures', false, ...
+            'save_figures', false);
+
+        MG_signals{end+1}  = TTk.MG_env(metak.is_valid);   %#ok<AGROW>
+        Ch3_signals{end+1} = TTk.Ch3_raw(metak.is_valid);  %#ok<AGROW>
+    end
+
+    outStim = amplitude_distribution( ...
+        MG_signals, Ch3_signals, fs, ...
+        'MGAlreadyAmplitude', true, ...
+        'PreWindowS', [-2 -0.2], ...
+        'OnMinDurMs', 100, ...
+        'TitleStr', 'MG amplitude during Ch3 ON vs local pre-ON OFF window');
+
+    disp(outStim.summary);
 end
-
-groups = lower(string({RecCurves.group}));
-isUninj = groups == "uninjured";
-isInj   = groups == "injured";
-
-peak_uninj = peakLag(isUninj);
-peak_inj   = peakLag(isInj);
-
-lags_ref     = xcOut.lags_s(:);
-meanXC_uninj = xcOut.meanU(:);
-sdXC_uninj   = xcOut.sdU(:);
-nU           = xcOut.n_uninj_used;
-
-
-meanXC_inj   = xcOut.meanS(:);
-sdXC_inj   = xcOut.sdS(:);
-
-nS         = xcOut.n_spas_used;
-
-z = 1.96;  % ~95% CI
-ciU = z * (sdXC_uninj ./ sqrt(max(nU,1)));
-% --- choose spastic CI source ---
-if isfield(xcOut,'ciS_within') && nS < 2 && isfield(xcOut,'meanS_seg')
-    % fallback: CI across spasm segments within the single recording
-    meanXC_inj = xcOut.meanS_seg(:);
-    ciS        = xcOut.ciS_within(:);
-    ciLabelS   = sprintf('Spastic 95%% CI within spasms (nSeg=%d)', xcOut.nSeg);
-else
-    % default: CI across recordings
-    ciLabelS = sprintf('Spastic 95%% CI across recs (n=%d)', nS);
-end
-
-%% ---- Y-limits ----
-yMaxSNR = max(M_SNR(:), [], 'omitnan') * 1.1;  if ~isfinite(yMaxSNR) || yMaxSNR<=0, yMaxSNR=1; end
-yMaxPNR = max(M_PNR(:), [], 'omitnan') * 1.1;  if ~isfinite(yMaxPNR) || yMaxPNR<=0, yMaxPNR=1; end
-yMaxDur = max(M_DUR(:), [], 'omitnan') * 1.1;  if ~isfinite(yMaxDur) || yMaxDur<=0, yMaxDur=1; end
-yMaxXC  = max([abs(meanXC_uninj); abs(meanXC_inj)], [], 'omitnan') * 1.1;
-if ~isfinite(yMaxXC) || yMaxXC<=0, yMaxXC = 1; end
-
-
-
-%% ---- Group SDs: SNR ----
-sdSNR_uninj = [std([R(isUninj).snrTA], 0, 'omitnan'), std([R(isUninj).snrMG], 0, 'omitnan')];
-sdSNR_inj   = [std([R(isInj).snrTA],   0, 'omitnan'), std([R(isInj).snrMG],   0, 'omitnan')];
-SD_SNR = [sdSNR_uninj; sdSNR_inj];
-
-%% ---- Group SDs: PNR ----
-sdPNR_uninj = [std([R(isUninj).pnrTA], 0, 'omitnan'), std([R(isUninj).pnrMG], 0, 'omitnan')];
-sdPNR_inj   = [std([R(isInj).pnrTA],   0, 'omitnan'), std([R(isInj).pnrMG],   0, 'omitnan')];
-SD_PNR = [sdPNR_uninj; sdPNR_inj];
-
-%% ---- Group SDs: Duration ----
-sdDur_uninj = [std([R(isUninj).durNormTA], 0, 'omitnan'), std([R(isUninj).durNormMG], 0, 'omitnan')];
-sdDur_spasm = [mean([R(isInj).durSpasmTA_sd],'omitnan'), ...
-               mean([R(isInj).durSpasmMG_sd],'omitnan')];
-SD_DUR = [sdDur_uninj; sdDur_spasm];
-
-%% ---- XCorr SD across recordings (needs per-recording curves) ----
-% Requires compare_files_xcorr to also return per-recording curves, OR recompute here.
-% If your compare_files_xcorr already returns XC matrices, use them. Otherwise see note below.
-sdXC_uninj = xcOut.sdU(:);
-sdXC_inj   = xcOut.sdS(:);
-
-%% ---- Single summary figure (4 subplots) ----
-figure('Name','Group comparison: SNR, PNR, Duration, XCorr');
-
-% ---------- SNR ----------
-subplot(3,2,1);
-b = bar(M_SNR); hold on;
-
-% Bar centers for grouped bars:
-x = arrayfun(@(i) b(i).XEndPoints, 1:numel(b), 'UniformOutput', false);
-
-errorbar(x{1}, M_SNR(:,1), SD_SNR(:,1), ...
-    'Color', [1 1 1], ...   % white
-    'LineWidth', 3, ...     % thicker
-    'CapSize', 14, ...
-    'LineStyle', 'none'); 
-errorbar(x{2}, M_SNR(:,2), SD_SNR(:,2), ...
-    'Color', [1 1 1], ...   % white
-    'LineWidth', 3, ...     % thicker
-    'CapSize', 14, ...
-    'LineStyle', 'none'); 
-
-set(gca,'XTickLabel',{'Uninjured','Spastic'});
-legend({'TA','MG'},'Location','best');
-ylabel('Mean SNR (linear)');
-grid on;
-ylim([0 yMaxSNR]);
-title(sprintf(['Signal-to-Noise Ratio\n' ...
-    'Uninjured: TA %.2f±%.2f  MG %.2f±%.2f | Spastic: TA %.2f±%.2f  MG %.2f±%.2f'], ...
-    muSNR_uninj(1), sdSNR_uninj(1), muSNR_uninj(2), sdSNR_uninj(2), ...
-    muSNR_inj(1),   sdSNR_inj(1),   muSNR_inj(2),   sdSNR_inj(2)));
-
-% ---------- PNR ----------
-subplot(3,2,2);
-b = bar(M_PNR); hold on;
-x = arrayfun(@(i) b(i).XEndPoints, 1:numel(b), 'UniformOutput', false);
-
-errorbar(x{1}, M_PNR(:,1), SD_PNR(:,1), ...
-    'Color', [1 1 1], ...   % white
-    'LineWidth', 3, ...     % thicker
-    'CapSize', 14, ...
-    'LineStyle', 'none'); 
-
-errorbar(x{2}, M_PNR(:,2), SD_PNR(:,2), ...
-    'Color', [1 1 1], ...   % white
-    'LineWidth', 3, ...     % thicker
-    'CapSize', 14, ...
-    'LineStyle', 'none'); 
-
-set(gca,'XTickLabel',{'Uninjured','Spastic'});
-legend({'TA','MG'},'Location','best');
-ylabel('Mean Peak-to-Noise Ratio');
-grid on;
-ylim([0 yMaxPNR]);
-title(sprintf(['Peak-to-Noise Ratio\n' ...
-    'Uninjured: TA %.2f±%.2f  MG %.2f±%.2f | Spastic: TA %.2f±%.2f  MG %.2f±%.2f'], ...
-    muPNR_uninj(1), sdPNR_uninj(1), muPNR_uninj(2), sdPNR_uninj(2), ...
-    muPNR_inj(1),   sdPNR_inj(1),   muPNR_inj(2),   sdPNR_inj(2)));
-
-% ---------- Duration ----------
-subplot(3,2,3);
-b = bar(M_DUR); hold on;
-x = arrayfun(@(i) b(i).XEndPoints, 1:numel(b), 'UniformOutput', false);
-
-
-errorbar(x{1}, M_DUR(:,1), SD_DUR(:,1), ...
-    'Color', [1 1 1], ...   % white
-    'LineWidth', 3, ...     % thicker
-    'CapSize', 14, ...
-    'LineStyle', 'none'); 
-errorbar(x{2}, M_DUR(:,2), SD_DUR(:,2), ...
-    'Color', [1 1 1], ...   % white
-    'LineWidth', 3, ...     % thicker
-    'CapSize', 14, ...
-    'LineStyle', 'none'); 
-
-set(gca,'XTickLabel',{'Uninjured (normal)','Spastic (spasm)'});
-legend({'TA','MG'},'Location','best');
-ylabel('Contraction duration (s)');
-grid on;
-ylim([0 yMaxDur]);
-title(sprintf(['Contraction Duration\n' ...
-    'Uninjured: TA %.3f±%.3f  MG %.3f±%.3f | Spastic: TA %.3f±%.3f  MG %.3f±%.3f'], ...
-    muDur_uninj(1), sdDur_uninj(1), muDur_uninj(2), sdDur_uninj(2), ...
-    muDur_spasm(1), sdDur_spasm(1), muDur_spasm(2), sdDur_spasm(2)));
-
-% ---------- Cross-correlation ----------
-subplot(3,2,4);
-hold on; grid on; box on;
-
-% Uninjured CI band
-fill([lags_ref; flipud(lags_ref)], ...
-     [meanXC_uninj - ciU; flipud(meanXC_uninj + ciU)], ...
-     [0.7 0.7 0.7], 'FaceAlpha', 0.5, 'EdgeColor', 'none');
-
-% Spastic CI band (either across recs or within-spasm fallback)
-fill([lags_ref; flipud(lags_ref)], ...
-     [meanXC_inj - ciS; flipud(meanXC_inj + ciS)], ...
-     [1 1 1], 'FaceAlpha', 0.5, 'EdgeColor', 'none');
-
-% Mean curves (draw on top)
-hU = plot(lags_ref, meanXC_uninj, 'LineWidth', 1.8);
-hS = plot(lags_ref, meanXC_inj,   'LineWidth', 2.5);
-uistack(hS,'top');
-
-xlabel('Lag (s)');
-ylabel('Correlation');
-
-% y-lims should include CI
-yMaxXC = max([abs(meanXC_uninj)+abs(ciU); abs(meanXC_inj)+abs(ciS)], [], 'omitnan') * 1.1;
-if ~isfinite(yMaxXC) || yMaxXC<=0, yMaxXC=1; end
-ylim([-yMaxXC yMaxXC]);
-
-title(sprintf('TA–MG Cross-correlation (mean ± 95%% CI) | \\pm %.1f s', max_lag_s));
-legend({'Uninjured 95% CI', ciLabelS, 'Uninjured mean', 'Spastic mean'}, 'Location','best');
-
-muPeak = [mean(peak_uninj,'omitnan'), ...
-          mean(peak_inj,'omitnan')];
-
-sdPeak = [std(peak_uninj,0,'omitnan'), ...
-          std(peak_inj,0,'omitnan')];
-
-subplot(3,2,5); 
-b = bar(muPeak); hold on;
-
-x = b.XEndPoints;
-
-errorbar(x, muPeak, sdPeak, ...
-    'Color',[1 1 1], ...
-    'LineWidth',3, ...
-    'CapSize',14, ...
-    'LineStyle','none');
-
-set(gca,'XTickLabel',{'Uninjured','Spastic'});
-ylabel('Lag at peak xcorr (s)');
-title('TA–MG cross-correlation peak lag');
-grid on;
-
-subplot(3, 2, 6)
-b = bar(M_OV); hold on;
-x = b.XEndPoints;
-
-errorbar(x, M_OV, SD_OV, ...
-    'Color', [1 1 1], ...
-    'LineWidth', 3, ...
-    'CapSize', 14, ...
-    'LineStyle', 'none');
-
-set(gca,'XTickLabel',{'Uninjured (normal)','Spastic (spasm)'});
-ylabel('TA∩MG overlap bout duration (s)');
-grid on;
-ylim([0 yMaxOv]);
-title(sprintf('TA & MG overlap duration for spasms and healthy gait'));
-exportgraphics(gcf, 'myplot.pdf', 'ContentType', 'vector')
-
 
 %% =========================
 % Local functions
 %% =========================
-
 function pnr = peak_to_noise_masked_peak(xRect, isRest, peakMask, peakPrct)
-xRect = xRect(:);
-isRest = isRest(:);
-peakMask = peakMask(:);
-
-if isempty(xRect) || numel(isRest) ~= numel(xRect) || numel(peakMask) ~= numel(xRect)
-    pnr = NaN;
-    return;
-end
-if ~any(isRest) || ~any(peakMask)
-    pnr = NaN;
-    return;
-end
-
+xRect = xRect(:); isRest = isRest(:); peakMask = peakMask(:);
+if isempty(xRect) || numel(isRest) ~= numel(xRect) || numel(peakMask) ~= numel(xRect), pnr = NaN; return; end
+if ~any(isRest) || ~any(peakMask), pnr = NaN; return; end
 noise = rms(xRect(isRest));
 xpk = xRect(peakMask);
-
-if nargin < 4 || isempty(peakPrct) || peakPrct >= 100
-    pk = max(xpk);
-else
-    pk = prctile(xpk, peakPrct);
-end
-
+if nargin < 4 || isempty(peakPrct) || peakPrct >= 100, pk = max(xpk); else, pk = prctile(xpk, peakPrct); end
 pnr = pk / (noise + eps);
 end
 
 function m = mean_bout_duration(isOn, fs)
 isOn = isOn(:) ~= 0;
-if ~any(isOn)
-    m = NaN;
-    return;
-end
+if ~any(isOn), m = NaN; return; end
 d = diff([false; isOn; false]);
-starts = find(d == 1);
-ends   = find(d == -1) - 1;
-durS   = (ends - starts + 1) / fs;
+starts = find(d == 1); ends = find(d == -1) - 1;
+durS = (ends - starts + 1) / fs;
 m = mean(durS, 'omitnan');
 end
 
 function m = max_bout_duration(isOn, fs)
 isOn = isOn(:) ~= 0;
-if ~any(isOn)
-    m = NaN;
-    return;
-end
+if ~any(isOn), m = NaN; return; end
 d = diff([false; isOn; false]);
-starts = find(d == 1);
-ends   = find(d == -1) - 1;
-durS   = (ends - starts + 1) / fs;
+starts = find(d == 1); ends = find(d == -1) - 1;
+durS = (ends - starts + 1) / fs;
 m = max(durS);
 end
 
@@ -530,16 +375,10 @@ function mask = build_interval_mask(N, fs, intervals)
 mask = false(N,1);
 if isempty(intervals), return; end
 for k = 1:size(intervals,1)
-    t0 = intervals(k,1);
-    t1 = intervals(k,2);
-    if ~(isfinite(t0) && isfinite(t1)) || t1 <= t0
-        continue;
-    end
+    t0 = intervals(k,1); t1 = intervals(k,2);
+    if ~(isfinite(t0) && isfinite(t1)) || t1 <= t0, continue; end
     i0 = max(1, floor(t0*fs) + 1);
     i1 = min(N, floor(t1*fs));
-    if i1 >= i0
-        mask(i0:i1) = true;
-    end
+    if i1 >= i0, mask(i0:i1) = true; end
 end
 end
-
