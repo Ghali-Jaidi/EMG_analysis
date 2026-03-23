@@ -121,18 +121,25 @@ valid_opts.min_channels_req  = 2;
 valid_opts.quiet_before_s    = 0.5;
 valid_opts.env_mult          = 3;
 valid_opts.fallback_full_valid = true;
-valid_opts.plot_debug          = true; 
+valid_opts.plot_debug          = true;
 
-if P.detect_acq_start
+if isfield(P, 'startTime') && ~isempty(P.startTime)
+    % Use manually set start time, skip detection entirely
+    startSample = max(1, round(P.startTime * fs));
+    fprintf('    Using manual startTime = %.3f s (sample %d), skipping detect_valid_acquisition_start.\n', ...
+        P.startTime, startSample);
+    is_valid_acq = false(size(TT.TA_f));
+    is_valid_acq(startSample:end) = true;
+
+elseif P.detect_acq_start
     [is_valid_acq, ~] = detect_valid_acquisition_start( ...
         TT.TA_f, TT.MG_f, TT.TA_env, TT.MG_env, fs, valid_opts);
-    
+
     if ~any(is_valid_acq)
         warning('Acquisition start not detected for this recording. Using full signal.');
         is_valid_acq = true(size(TT.TA_f));
     end
 else
-    % Skip detection and keep full recording valid
     is_valid_acq = true(size(TT.TA_f));
 end
 

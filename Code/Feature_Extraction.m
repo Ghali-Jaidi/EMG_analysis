@@ -63,7 +63,19 @@ if run_group_compare
         fullFile = fullfile(p,f);
         fprintf('\n=== [%d/%d] Processing: %s ===\n', k, nFiles, fullFile);
 
-        [TTk, snrk, metak] = preprocess_and_label(fs, ...
+        % --- Load params if a _param file exists, otherwise use defaults ---
+        [~, srcName, ~] = fileparts(f);
+        paramFile = fullfile(p, [srcName, '_param.mat']);
+        if isfile(paramFile)
+            fprintf('    Found param file: %s\n', paramFile);
+            tmp = load(paramFile, 'P');
+            P = tmp.P;
+        else
+            fprintf('    No param file found, using defaults.\n');
+            P = default_emg_parameters();
+        end
+
+        [TTk, snrk, metak] = preprocess_and_label(P, fs, ...
             'fullFile', fullFile, ...
             'plot_figures', false, ...
             'save_figures', false);
@@ -272,7 +284,7 @@ if run_group_compare
     plot(lags_ref, meanXC_uninj, 'LineWidth', 1.8);
     plot(lags_ref, meanXC_inj, 'LineWidth', 2.5);
     xlabel('Lag (s)'); ylabel('Correlation'); ylim([-yMaxXC yMaxXC]);
-    title(sprintf('TA–MG Cross-correlation (mean ± 95%% CI) | \\pm %.1f s', max_lag_s));
+    title(sprintf('TA-MG Cross-correlation (mean +/- 95%% CI) | +/- %.1f s', max_lag_s));
     legend({'Uninjured 95% CI', ciLabelS, 'Uninjured mean', 'Spastic mean'}, 'Location','best');
 
     subplot(3,2,5);
@@ -281,13 +293,13 @@ if run_group_compare
     b = bar(muPeak); hold on;
     errorbar(b.XEndPoints, muPeak, sdPeak, 'w', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
     set(gca,'XTickLabel',{'Uninjured','Spastic'}); ylabel('Lag at peak xcorr (s)');
-    title('TA–MG cross-correlation peak lag'); grid on;
+    title('TA-MG cross-correlation peak lag'); grid on;
 
     subplot(3,2,6);
     b = bar(M_OV); hold on;
     errorbar(b.XEndPoints, M_OV, SD_OV, 'w', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
     set(gca,'XTickLabel',{'Uninjured (normal)','Spastic (spasm)'});
-    ylabel('TA∩MG overlap bout duration (s)'); grid on; ylim([0 yMaxOv]);
+    ylabel('TA-MG overlap bout duration (s)'); grid on; ylim([0 yMaxOv]);
     title('TA & MG overlap duration');
 
     exportgraphics(gcf, 'group_comparison.pdf', 'ContentType', 'vector');
@@ -307,7 +319,8 @@ if run_stim_compare
         error('Invalid number of files.');
     end
 
-    MG_signals = {};
+    TA_signals  = {};
+    MG_signals  = {};
     Ch3_signals = {};
 
     for k = 1:nStimFiles
@@ -320,24 +333,66 @@ if run_stim_compare
 
         fullFile = fullfile(p,f);
         fprintf('\n=== [%d/%d] Stim analysis: %s ===\n', k, nStimFiles, fullFile);
-        P = default_emg_parameters();
+
+        % --- Load params if a _param file exists, otherwise use defaults ---
+        [~, srcName, ~] = fileparts(f);
+        paramFile = fullfile(p, [srcName, '_param.mat']);
+        if isfile(paramFile)
+            fprintf('    Found param file: %s\n', paramFile);
+            tmp = load(paramFile, 'P');
+            P = tmp.P;
+        else
+            fprintf('    No param file found, using defaults.\n');
+            P = default_emg_parameters();
+        end
+
         [TTk, ~, metak] = preprocess_and_label(P, fs, ...
             'fullFile', fullFile, ...
             'plot_figures', false, ...
             'save_figures', false);
 
-        MG_signals{end+1}  = TTk.MG_env(metak.is_valid);   %#ok<AGROW>
-        Ch3_signals{end+1} = TTk.Ch3_raw(metak.is_valid);  %#ok<AGROW>
+        ta_full  = TTk.TA_env;
+        mg_full  = TTk.MG_env;
+        ch3_full = TTk.Ch3_raw;
+
+        % Replace invalid samples with NaN instead of removing them
+        ta_full(~metak.is_valid)  = NaN;
+        mg_full(~metak.is_valid)  = NaN;
+        ch3_full(~metak.is_valid) = NaN;
+
+        TA_signals{end+1}  = ta_full;   %#ok<AGROW>
+        MG_signals{end+1}  = mg_full;   %#ok<AGROW>
+        Ch3_signals{end+1} = ch3_full;  %#ok<AGROW>
     end
 
-    outStim = amplitude_distribution( ...
+    % -------- MG figure --------
+
+    outStim_MG = amplitude_distribution( ...
         MG_signals, Ch3_signals, fs, ...
         'MGAlreadyAmplitude', true, ...
         'PreWindowS', [-2 -0.2], ...
         'OnMinDurMs', 100, ...
         'TitleStr', 'MG amplitude during Ch3 ON vs local pre-ON OFF window');
 
-    disp(outStim.summary);
+    disp('--- MG summary ---');
+    disp(outStim_MG.summary);
+
+    % -------- TA figure --------
+
+    outStim_TA = amplitude_distribution( ...
+        TA_signals, Ch3_signals, fs, ...
+        'MGAlreadyAmplitude', true, ...
+        'PreWindowS', [-2 -0.2], ...
+        'OnMinDurMs', 100, ...
+        'TitleStr', 'TA amplitude during Ch3 ON vs local pre-ON OFF window');
+
+    disp('--- TA summary ---');
+    disp(outStim_TA.summary);
+
+    % -------- Overall collapsed comparison --------
+    overall_comparison_stim(TA_signals, MG_signals, Ch3_signals, fs, ...
+        'PreWindowS', [-2 -0.2], ...
+        'OnMinDurMs', 100);
 end
 
 %% =========================
@@ -380,5 +435,182 @@ for k = 1:size(intervals,1)
     i0 = max(1, floor(t0*fs) + 1);
     i1 = min(N, floor(t1*fs));
     if i1 >= i0, mask(i0:i1) = true; end
+end
+end
+
+% -----------------------------------------------------------------------
+% overall_comparison_stim
+%   Collapses all stim-ON bouts and all stim-OFF (pre-ON) windows across
+%   every recording into a single mean +/- SD bar chart for TA and MG,
+%   mirroring the per-recording amplitude_distribution plots.
+%
+%   The ON/OFF window detection uses the same parameters that were passed
+%   to amplitude_distribution so results are directly comparable.
+%
+%   Inputs
+%     TA_signals  - cell array of TA envelope vectors (one per recording)
+%     MG_signals  - cell array of MG envelope vectors (one per recording)
+%     Ch3_signals - cell array of Ch3 raw vectors     (one per recording)
+%     fs          - sampling frequency (Hz)
+%   Optional name-value pairs (match those passed to amplitude_distribution)
+%     'PreWindowS'  - [t_start t_end] in seconds relative to each ON onset
+%                     (default [-2 -0.2])
+%     'OnMinDurMs'  - minimum stim-ON bout duration in ms (default 100)
+%     'OnThreshPct' - percentile of |Ch3| used to threshold ON detection
+%                     (default 20)
+% -----------------------------------------------------------------------
+function overall_comparison_stim(TA_signals, MG_signals, Ch3_signals, fs, varargin)
+
+%% --- Parse options ---
+p = inputParser;
+addParameter(p, 'PreWindowS',   [-2 -0.2]);
+addParameter(p, 'OnMinDurMs',   100);
+addParameter(p, 'OnThreshPct',  20);
+parse(p, varargin{:});
+
+preWin      = p.Results.PreWindowS;
+minDurSmp   = round(p.Results.OnMinDurMs / 1000 * fs);
+onThreshPct = p.Results.OnThreshPct;
+
+nRec = numel(TA_signals);
+
+%% --- Collect per-bout mean amplitudes across all recordings ---
+ta_on_vals  = [];
+ta_off_vals = [];
+mg_on_vals  = [];
+mg_off_vals = [];
+
+for k = 1:nRec
+    ta  = TA_signals{k}(:);
+    mg  = MG_signals{k}(:);
+    ch3 = Ch3_signals{k}(:);
+    N   = numel(ta);
+
+    % ---- Detect stim-ON from Ch3 ----
+    ch3_valid = ch3(isfinite(ch3));
+    if isempty(ch3_valid)
+        warning('overall_comparison_stim: recording %d has no valid Ch3 samples, skipping.', k);
+        continue;
+    end
+    thresh   = prctile(abs(ch3_valid), onThreshPct);
+    isOn_raw = abs(ch3) > thresh;
+
+    % Remove bouts shorter than OnMinDurMs
+    isOn = stim_filter_short_bouts(isOn_raw, minDurSmp);
+
+    % ---- Find ON-bout boundaries ----
+    d        = diff([false; isOn(:); false]);
+    onStarts = find(d ==  1);
+    onEnds   = find(d == -1) - 1;
+
+    for b = 1:numel(onStarts)
+        i0_on = onStarts(b);
+        i1_on = onEnds(b);
+
+        % --- ON window: mean amplitude over the entire bout ---
+        ta_seg = ta(i0_on:i1_on);
+        mg_seg = mg(i0_on:i1_on);
+
+        if any(isfinite(ta_seg))
+            ta_on_vals(end+1) = mean(ta_seg, 'omitnan'); %#ok<AGROW>
+        end
+        if any(isfinite(mg_seg))
+            mg_on_vals(end+1) = mean(mg_seg, 'omitnan'); %#ok<AGROW>
+        end
+
+        % --- OFF window: pre-ON window, excluding any stim-ON samples ---
+        t_on_start = (i0_on - 1) / fs;           % time of ON onset (s)
+        ip0 = max(1, round((t_on_start + preWin(1)) * fs) + 1);
+        ip1 = min(N, round((t_on_start + preWin(2)) * fs));
+
+        if ip1 > ip0
+            ta_pre = ta(ip0:ip1);
+            mg_pre = mg(ip0:ip1);
+
+            % Blank any samples that were themselves stim-ON
+            ta_pre(isOn(ip0:ip1)) = NaN;
+            mg_pre(isOn(ip0:ip1)) = NaN;
+
+            if any(isfinite(ta_pre))
+                ta_off_vals(end+1) = mean(ta_pre, 'omitnan'); %#ok<AGROW>
+            end
+            if any(isfinite(mg_pre))
+                mg_off_vals(end+1) = mean(mg_pre, 'omitnan'); %#ok<AGROW>
+            end
+        end
+    end
+end
+
+%% --- Compute group-level statistics ---
+mu_ta = [mean(ta_off_vals, 'omitnan'), mean(ta_on_vals, 'omitnan')];
+sd_ta = [std( ta_off_vals, 0, 'omitnan'), std( ta_on_vals, 0, 'omitnan')];
+n_ta  = [sum(isfinite(ta_off_vals)), sum(isfinite(ta_on_vals))];
+
+mu_mg = [mean(mg_off_vals, 'omitnan'), mean(mg_on_vals, 'omitnan')];
+sd_mg = [std( mg_off_vals, 0, 'omitnan'), std( mg_on_vals, 0, 'omitnan')];
+n_mg  = [sum(isfinite(mg_off_vals)), sum(isfinite(mg_on_vals))];
+
+fprintf('\n--- Overall stim comparison (all recordings pooled) ---\n');
+fprintf('TA  OFF: mean = %.4f  SD = %.4f  n = %d bouts\n', mu_ta(1), sd_ta(1), n_ta(1));
+fprintf('TA  ON : mean = %.4f  SD = %.4f  n = %d bouts\n', mu_ta(2), sd_ta(2), n_ta(2));
+fprintf('MG  OFF: mean = %.4f  SD = %.4f  n = %d bouts\n', mu_mg(1), sd_mg(1), n_mg(1));
+fprintf('MG  ON : mean = %.4f  SD = %.4f  n = %d bouts\n', mu_mg(2), sd_mg(2), n_mg(2));
+
+%% --- Plot ---
+clrOFF = [0.40 0.60 0.90];   % blue  - stim OFF
+clrON  = [0.90 0.40 0.40];   % red   - stim ON
+
+yMaxTA = max(mu_ta + sd_ta, [], 'omitnan') * 1.25;
+yMaxMG = max(mu_mg + sd_mg, [], 'omitnan') * 1.25;
+if ~isfinite(yMaxTA) || yMaxTA <= 0, yMaxTA = 1; end
+if ~isfinite(yMaxMG) || yMaxMG <= 0, yMaxMG = 1; end
+
+figure('Name', 'Overall Stim ON vs OFF - collapsed across all recordings');
+
+% ---- TA subplot ----
+subplot(1, 2, 1);
+b = bar(mu_ta, 'FaceColor', 'flat');
+b.CData(1,:) = clrOFF;
+b.CData(2,:) = clrON;
+hold on;
+errorbar(b.XEndPoints, mu_ta, sd_ta, ...
+    'w', 'LineWidth', 2, 'CapSize', 12, 'LineStyle', 'none');
+set(gca, 'XTick', 1:2, 'XTickLabel', {'Stim OFF', 'Stim ON'});
+ylabel('Mean EMG Amplitude');
+ylim([0, yMaxTA]);
+grid on;
+title(sprintf('TA: Overall Stim ON vs OFF\n(n_{OFF} = %d, n_{ON} = %d bouts)', n_ta(1), n_ta(2)));
+
+% ---- MG subplot ----
+subplot(1, 2, 2);
+b = bar(mu_mg, 'FaceColor', 'flat');
+b.CData(1,:) = clrOFF;
+b.CData(2,:) = clrON;
+hold on;
+errorbar(b.XEndPoints, mu_mg, sd_mg, ...
+    'w', 'LineWidth', 2, 'CapSize', 12, 'LineStyle', 'none');
+set(gca, 'XTick', 1:2, 'XTickLabel', {'Stim OFF', 'Stim ON'});
+ylabel('Mean EMG Amplitude');
+ylim([0, yMaxMG]);
+grid on;
+title(sprintf('MG: Overall Stim ON vs OFF\n(n_{OFF} = %d, n_{ON} = %d bouts)', n_mg(1), n_mg(2)));
+
+sgtitle(sprintf('Overall Amplitude: Stim ON vs OFF  (%d recording(s), mean +/- SD)', nRec));
+exportgraphics(gcf, 'overall_stim_comparison.pdf', 'ContentType', 'vector');
+end
+
+% -----------------------------------------------------------------------
+% stim_filter_short_bouts  (private helper for overall_comparison_stim)
+%   Removes ON bouts shorter than minDurSmp samples from a logical vector.
+% -----------------------------------------------------------------------
+function isOn = stim_filter_short_bouts(isOn_raw, minDurSmp)
+isOn   = isOn_raw(:);
+d      = diff([false; isOn; false]);
+starts = find(d ==  1);
+ends   = find(d == -1) - 1;
+for i = 1:numel(starts)
+    if (ends(i) - starts(i) + 1) < minDurSmp
+        isOn(starts(i):ends(i)) = false;
+    end
 end
 end
