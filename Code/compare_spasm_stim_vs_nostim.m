@@ -495,6 +495,7 @@ legend(ax,'TextColor','w','Color','k','Location','best');
 end
 
 function shade_ax(ax, t, mask, ylims, color, alpha)
+% Shade regions of a plot where mask is true. Handles NaN values.
 if ~any(mask), return; end
 d = diff([false; mask(:); false]);
 s = find(d ==  1);
@@ -522,34 +523,4 @@ out.stats_TA      = struct('ranksum', NaN);
 out.p_MG          = NaN;
 out.h_MG          = 0;
 out.stats_MG      = struct('ranksum', NaN);
-end
-
-% ----------------------------------------------------------------
-function mask_out = keep_long_runs(mask_in, min_len)
-mask_in  = logical(mask_in(:));
-d        = diff([false; mask_in; false]);
-starts   = find(d ==  1);
-ends     = find(d == -1) - 1;
-mask_out = false(size(mask_in));
-for i = 1:numel(starts)
-    if (ends(i) - starts(i) + 1) >= min_len
-        mask_out(starts(i):ends(i)) = true;
-    end
-end
-end
-
-% ----------------------------------------------------------------
-function mask_out = fuse_masks(mask_in, fs, gap_ms)
-% Fuse gaps shorter than gap_ms milliseconds between ON regions.
-mask_in  = logical(mask_in(:));
-gap_smp  = max(1, round(gap_ms / 1000 * fs));
-d        = diff([false; mask_in; false]);
-starts   = find(d ==  1);
-ends     = find(d == -1) - 1;
-mask_out = mask_in;
-for i = 1:numel(starts)-1
-    if (starts(i+1) - ends(i) - 1) <= gap_smp
-        mask_out(ends(i):starts(i+1)) = true;
-    end
-end
 end

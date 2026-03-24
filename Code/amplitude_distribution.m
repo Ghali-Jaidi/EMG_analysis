@@ -761,20 +761,3 @@ out.event_table = T;
 out.delta       = delta_pre;
 out.summary     = summary;
 end
-
-% ================================================================
-% LOCAL HELPER
-% ================================================================
-function mask_out = keep_long_runs(mask_in, min_len)
-mask_in = logical(mask_in(:));
-d = diff([false; mask_in; false]);
-starts = find(d == 1);
-ends   = find(d == -1) - 1;
-
-mask_out = false(size(mask_in));
-for i = 1:numel(starts)
-    if (ends(i) - starts(i) + 1) >= min_len
-        mask_out(starts(i):ends(i)) = true;
-    end
-end
-end
