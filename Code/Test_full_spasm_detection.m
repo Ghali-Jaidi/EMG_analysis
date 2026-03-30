@@ -25,8 +25,8 @@ P = default_emg_parameters();
 % Run state analysis
 % Kept here for inspection, but not used in the amplitude comparison below
 % ------------------------------------------------
-state_out = spasm_gait_stim_analysis(TT, snr, fs); %#ok<NASGU>
-out_spasm_stim = compare_spasm_stim_vs_nostim(TT, snr, fs, ...
+state_out = Copy_of_spasm_gait_stim_analysis(TT, snr, fs); %#ok<NASGU>
+out_spasm_stim = Copy_of_compare_spasm_stim_vs_nostim(TT, snr, fs, ...
     'SpasmPrcTA',    65,   ...   % percentile on active TA to define spasm threshold
     'SpasmPrcMG',    65,   ...   % percentile on active MG to define spasm threshold
     'SpasmMinDurS',  0.1,  ...   % minimum spasm duration in seconds
