@@ -50,7 +50,7 @@ function S = generate_synthetic_emg(varargin)
 
 p = inputParser;
 p.addParameter('fs',                  10000, @isnumeric);
-p.addParameter('DurS',                500,   @isnumeric);
+p.addParameter('DurS',                80,   @isnumeric);
 p.addParameter('PreAcqS',             3,     @isnumeric);
 
 p.addParameter('NoiseAmpTA',          0.025, @isnumeric);
@@ -73,9 +73,9 @@ p.addParameter('GaitBurstDutyPrcMG',  0.52,  @isnumeric);
 % Fraction of one cycle that MG tail overlaps into TA of the next cycle
 p.addParameter('GaitMGOverlapFrac',   0.12,  @isnumeric);
 
-p.addParameter('NGaitBouts',          20,    @isnumeric);
+p.addParameter('NGaitBouts',          3,    @isnumeric);
 p.addParameter('GaitBoutDurS',        10,    @isnumeric);
-p.addParameter('NSpasms',             12,     @isnumeric);
+p.addParameter('NSpasms',             3,     @isnumeric);
 p.addParameter('SpasmDurS',           2,   @isnumeric);
 
 p.addParameter('Ch3OnDurS',           1,     @isnumeric);

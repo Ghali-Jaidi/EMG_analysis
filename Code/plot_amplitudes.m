@@ -5,6 +5,7 @@ arguments
     options.Axes = []
     options.ThrAct (1,1) double = NaN
     options.NoiseRMS (1,1) double = NaN
+    options.LinkedAxes = []  % Optional: axes to synchronize with (e.g., [ax1, ax2])
 end
 
 if isempty(options.Axes)
@@ -56,5 +57,20 @@ set(ax, 'Color', 'white', ...
 ax.XLabel.Color = 'black';
 ax.YLabel.Color = 'black';
 ax.Title.Color  = 'black';
+
+% Synchronize axes if LinkedAxes provided
+if ~isempty(options.LinkedAxes) && numel(options.LinkedAxes) > 0
+    % Synchronize X-axis
+    xlim_min = min([ax.XLim(1), options.LinkedAxes(1).XLim(1)]);
+    xlim_max = max([ax.XLim(2), options.LinkedAxes(1).XLim(2)]);
+    ax.XLim = [xlim_min, xlim_max];
+    options.LinkedAxes(1).XLim = [xlim_min, xlim_max];
+    
+    % Synchronize Y-axis
+    ylim_min = min([ax.YLim(1), options.LinkedAxes(1).YLim(1)]);
+    ylim_max = max([ax.YLim(2), options.LinkedAxes(1).YLim(2)]);
+    ax.YLim = [ylim_min, ylim_max];
+    options.LinkedAxes(1).YLim = [ylim_min, ylim_max];
+end
 
 end

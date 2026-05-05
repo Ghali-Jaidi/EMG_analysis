@@ -48,9 +48,22 @@ P.act_prc = actSlider.Value;
 P.act_prc_MG = actMGSlider.Value;
 P.fuse_gap_ms = fuseSlider.Value;
 
-[TT, snr, meta] = preprocess_and_label(fs,P, ...
-    'fullFile', fullFile, ...
-    'plot_figures', false);
+options = struct();
+options.envWindowMs = P.envWindowMs;
+options.thresholds = P.thresholds;
+options.min_quiet_dur_ms = P.min_quiet_dur_ms;
+options.fuse_gap_ms = P.fuse_gap_ms;
+options.snr_win_ms = P.snr_win_ms;
+options.act_prc = P.act_prc;
+options.act_prc_MG = P.act_prc_MG;
+options.plot_figures = false;
+options.save_figures = false;
+options.fig_folder = 'Figures';
+options.use_envelope = P.use_envelope;
+options.fullFile = fullFile;
+options.recID = NaN;
+
+[TT, snr, meta] = preprocess_and_label(fs, options);
 
 t = seconds(TT.tDur);
 

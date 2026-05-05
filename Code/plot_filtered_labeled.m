@@ -9,21 +9,29 @@ arguments
 end
 
 if isempty(ax)
-    f = figure;
-    ax = axes('Parent', f);
+    f = figure('Position', [100 100 1400 600]);
+    % Create 3 subplots for separate channels with individual scales
+    ax = gobjects(3, 1);
+    ax(1) = subplot(3, 1, 1, 'Parent', f);
+    ax(2) = subplot(3, 1, 2, 'Parent', f);
+    ax(3) = subplot(3, 1, 3, 'Parent', f);
 end
 
-cla(ax);
-hold(ax, 'on');
-
-spacing = max([range(channel_1), range(channel_2), range(channel_3)]) * 1.5;
-if spacing == 0 || ~isfinite(spacing)
-    spacing = 1;
+% If ax is a single axes object, convert to cell array for flexibility
+if ~isvector(ax) || isscalar(ax)
+    ax_single = ax;
+    ax = gobjects(3, 1);
+    ax(1) = ax_single;
+    ax(2) = ax_single;
+    ax(3) = ax_single;
 end
 
-off1 = 0;
-off2 = spacing;
-off3 = 2 * spacing;
+cla(ax(1));
+cla(ax(2));
+cla(ax(3));
+hold(ax(1), 'on');
+hold(ax(2), 'on');
+hold(ax(3), 'on');
 
 % ---- Masks ----
 rest_idx_TA = snrValue.is_rest(:);
@@ -31,73 +39,89 @@ rest_idx_MG = snrValue.is_rest_MG(:);
 act_idx_TA  = snrValue.is_act(:);
 act_idx_MG  = snrValue.is_act_MG(:);
 
-lane_half = 0.3 * spacing;
-yl_TA = [off1 - lane_half, off1 + lane_half];
-yl_MG = [off2 - lane_half, off2 + lane_half];
+% Get colors for better contrast
+colors = get_emg_plot_colors();
 
-% ---- Highlight regions (first visible handle only for legend) ----
-plot_mask_regions(ax, t, act_idx_TA,  yl_TA, [1 1 0],       'Active regions');
-plot_mask_regions(ax, t, act_idx_MG,  yl_MG, [1 1 0],       '');
-plot_mask_regions(ax, t, rest_idx_TA, yl_TA, [1 0.85 0.85], 'TA rest regions');
-plot_mask_regions(ax, t, rest_idx_MG, yl_MG, [0.85 0.85 1], 'MG rest regions');
+% ===== SUBPLOT 1: TA Channel =====
+cla(ax(1));
+hold(ax(1), 'on');
 
-% ---- Plot signals ----
-plot(ax, t, channel_1 + off1, 'g', 'LineWidth', 1, 'DisplayName', 'Left TA (filtered)');
-plot(ax, t, channel_2 + off2, 'b', 'LineWidth', 1, 'DisplayName', 'Left MG (filtered)');
-plot(ax, t, channel_3 + off3, 'r', 'LineWidth', 1, 'DisplayName', 'Channel 3 (raw)');
+% Get y limits for current subplot
+y_min_1 = min(channel_1);
+y_max_1 = max(channel_1);
 
-% ---- Threshold lines ----
-yline(ax,  snrValue.thr_rest    + off1, '--k', 'DisplayName', 'Rest threshold');
-yline(ax, -snrValue.thr_rest    + off1, '--k', 'HandleVisibility', 'off');
-yline(ax,  snrValue.thr_act     + off1, '--r', 'DisplayName', 'Active threshold');
-yline(ax, -snrValue.thr_act     + off1, '--r', 'HandleVisibility', 'off');
-
-yline(ax,  snrValue.thr_rest_MG + off2, '--k', 'HandleVisibility', 'off');
-yline(ax, -snrValue.thr_rest_MG + off2, '--k', 'HandleVisibility', 'off');
-yline(ax,  snrValue.thr_act_MG  + off2, '--r', 'HandleVisibility', 'off');
-yline(ax, -snrValue.thr_act_MG  + off2, '--r', 'HandleVisibility', 'off');
-
-% ---- Noise baseline patch for MG lane ----
-if isfield(snrValue, 't_quiet_MG_start') && isfield(snrValue, 't_quiet_MG_end') ...
-        && ~isempty(snrValue.t_quiet_MG_start) && ~isempty(snrValue.t_quiet_MG_end)
-    patch(ax, ...
-        [snrValue.t_quiet_MG_start, snrValue.t_quiet_MG_end, ...
-         snrValue.t_quiet_MG_end,   snrValue.t_quiet_MG_start], ...
-        [off2 - lane_half, off2 - lane_half, off2 + lane_half, off2 + lane_half], ...
-        [1 0.6 0], ...
-        'FaceAlpha', 0.18, 'EdgeColor', [1 0.4 0], 'LineWidth', 1, ...
-        'HandleVisibility', 'off');
+% Highlight active/rest regions with current subplot's y-range
+if any(act_idx_TA)
+    plot_mask_regions(ax(1), t, act_idx_TA,  [y_min_1 y_max_1], [1 1 0],       'Active regions');
+end
+if any(rest_idx_TA)
+    plot_mask_regions(ax(1), t, rest_idx_TA, [y_min_1 y_max_1], [1 0.85 0.85], 'Rest regions');
 end
 
-% ---- Noise baseline patch for TA lane ----
-if isfield(snrValue, 't_quiet_TA_start') && isfield(snrValue, 't_quiet_TA_end') ...
-        && ~isempty(snrValue.t_quiet_TA_start) && ~isempty(snrValue.t_quiet_TA_end)
-    patch(ax, ...
-        [snrValue.t_quiet_TA_start, snrValue.t_quiet_TA_end, ...
-         snrValue.t_quiet_TA_end,   snrValue.t_quiet_TA_start], ...
-        [off1 - lane_half, off1 - lane_half, off1 + lane_half, off1 + lane_half], ...
-        [1 0.6 0], ...
-        'FaceAlpha', 0.18, 'EdgeColor', [1 0.4 0], 'LineWidth', 1, ...
-        'HandleVisibility', 'off');
+% Plot signal
+plot(ax(1), t, channel_1, 'Color', colors.TA, 'LineWidth', 1.5, 'DisplayName', 'TA (filtered)');
+
+% Threshold lines
+yline(ax(1),  snrValue.thr_rest,    '--k', 'DisplayName', sprintf('Rest thr: %.2f', snrValue.thr_rest));
+yline(ax(1), -snrValue.thr_rest,    '--k', 'HandleVisibility', 'off');
+yline(ax(1),  snrValue.thr_act,     '--r', 'DisplayName', sprintf('Active thr: %.2f', snrValue.thr_act));
+yline(ax(1), -snrValue.thr_act,     '--r', 'HandleVisibility', 'off');
+
+xlabel(ax(1), 'Time (s)', 'FontSize', 10, 'FontWeight', 'bold');
+ylabel(ax(1), sprintf('Amplitude (mV)\nRange: %.2f', range(channel_1)), 'FontSize', 10, 'FontWeight', 'bold');
+title(ax(1), 'Left TA (filtered) - Independent Scale', 'FontSize', 11, 'FontWeight', 'bold');
+grid(ax(1), 'on');
+legend(ax(1), 'Location', 'best', 'FontSize', 9);
+box(ax(1), 'on');
+hold(ax(1), 'off');
+
+% ===== SUBPLOT 2: MG Channel =====
+cla(ax(2));
+hold(ax(2), 'on');
+
+% Get y limits for current subplot
+y_min_2 = min(channel_2);
+y_max_2 = max(channel_2);
+
+% Highlight active/rest regions with current subplot's y-range
+if any(act_idx_MG)
+    plot_mask_regions(ax(2), t, act_idx_MG,  [y_min_2 y_max_2], [1 1 0],       'Active regions');
+end
+if any(rest_idx_MG)
+    plot_mask_regions(ax(2), t, rest_idx_MG, [y_min_2 y_max_2], [0.85 0.85 1], 'Rest regions');
 end
 
-% ---- Formatting ----
-yticks(ax, [off1 off2 off3]);
-yticklabels(ax, {'Left TA (filtered)', 'Left MG (filtered)', 'Channel 3 (raw)'});
-xlabel(ax, 'Time (s)');
-ylabel(ax, 'Amplitude + offset');
-title(ax, 'Filtered EMG (offset) + Channel 3 (raw)');
-grid(ax, 'on');
-box(ax, 'on');
+% Plot signal
+plot(ax(2), t, channel_2, 'Color', colors.MG, 'LineWidth', 1.5, 'DisplayName', 'MG (filtered)');
 
-% ---- Clean and rebuild legend from visible objects only ----
-lgd = legend(ax);
-if ~isempty(lgd) && isvalid(lgd)
-    delete(lgd);
-end
-legend(ax, 'show', 'Location', 'best');
+% Threshold lines
+yline(ax(2),  snrValue.thr_rest_MG,    '--k', 'DisplayName', sprintf('Rest thr: %.2f', snrValue.thr_rest_MG));
+yline(ax(2), -snrValue.thr_rest_MG,    '--k', 'HandleVisibility', 'off');
+yline(ax(2),  snrValue.thr_act_MG,     '--r', 'DisplayName', sprintf('Active thr: %.2f', snrValue.thr_act_MG));
+yline(ax(2), -snrValue.thr_act_MG,     '--r', 'HandleVisibility', 'off');
 
-hold(ax, 'off');
+xlabel(ax(2), 'Time (s)', 'FontSize', 10, 'FontWeight', 'bold');
+ylabel(ax(2), sprintf('Amplitude (mV)\nRange: %.2f', range(channel_2)), 'FontSize', 10, 'FontWeight', 'bold');
+title(ax(2), 'Left MG (filtered) - Independent Scale', 'FontSize', 11, 'FontWeight', 'bold');
+grid(ax(2), 'on');
+legend(ax(2), 'Location', 'best', 'FontSize', 9);
+box(ax(2), 'on');
+hold(ax(2), 'off');
+
+% ===== SUBPLOT 3: Channel 3 (raw) =====
+cla(ax(3));
+hold(ax(3), 'on');
+
+% Plot signal
+plot(ax(3), t, channel_3, 'Color', colors.Ch3, 'LineWidth', 1.5, 'DisplayName', 'Channel 3 (raw)');
+
+xlabel(ax(3), 'Time (s)', 'FontSize', 10, 'FontWeight', 'bold');
+ylabel(ax(3), sprintf('Amplitude (mV)\nRange: %.2f', range(channel_3)), 'FontSize', 10, 'FontWeight', 'bold');
+title(ax(3), 'Channel 3 (raw) - Independent Scale', 'FontSize', 11, 'FontWeight', 'bold');
+grid(ax(3), 'on');
+legend(ax(3), 'Location', 'best', 'FontSize', 9);
+box(ax(3), 'on');
+hold(ax(3), 'off');
 end
 
 function plot_mask_regions(ax, timeVec, mask, ylimits, color, displayName)

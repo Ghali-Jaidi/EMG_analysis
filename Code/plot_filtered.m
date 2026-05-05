@@ -21,10 +21,13 @@ off1 = 0;
 off2 = spacing;
 off3 = 2*spacing;
 
+% Get darker colors for better contrast on white background
+colors = get_emg_plot_colors();
+
 figure;
-plot(t, channel_1 + off1, 'g', 'LineWidth', 1); hold on;
-plot(t, channel_2 + off2, 'b', 'LineWidth', 1);
-plot(t, channel_3 + off3, 'r', 'LineWidth', 1);
+plot(t, channel_1 + off1, 'Color', colors.TA, 'LineWidth', 1.5); hold on;
+plot(t, channel_2 + off2, 'Color', colors.MG, 'LineWidth', 1.5);
+plot(t, channel_3 + off3, 'Color', colors.Ch3, 'LineWidth', 1.5);
 hold off;
 
 yticks([off1 off2 off3]);

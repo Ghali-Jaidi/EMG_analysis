@@ -426,33 +426,20 @@ scatter(ax, xns, nostim, 28, c_nostim, 'filled','MarkerFaceAlpha',0.7);
 
 % Mean ± SD
 errorbar(ax, 1, mean(stim,'omitnan'),   std(stim,0,'omitnan'), ...
-    'w','LineWidth',2.5,'CapSize',14,'LineStyle','none');
+    'k','LineWidth',2.5,'CapSize',14,'LineStyle','none');
 errorbar(ax, 2, mean(nostim,'omitnan'), std(nostim,0,'omitnan'), ...
-    'w','LineWidth',2.5,'CapSize',14,'LineStyle','none');
+    'k','LineWidth',2.5,'CapSize',14,'LineStyle','none');
 
-plot(ax, 1, mean(stim,'omitnan'),   'w+','MarkerSize',10,'LineWidth',2.5);
-plot(ax, 2, mean(nostim,'omitnan'), 'w+','MarkerSize',10,'LineWidth',2.5);
-
-% Significance bracket
-all_vals = [stim(:); nostim(:)];
-top = max(all_vals,[],'omitnan') * 1.15;
-if ~isfinite(top) || top <= 0, top = 1; end
-plot(ax,[1 1 2 2],[top*0.97 top top top*0.97],'w-','LineWidth',1);
-if isfinite(p_val)
-    if     p_val < 0.001, sig_str = '***';
-    elseif p_val < 0.01,  sig_str = '**';
-    elseif p_val < 0.05,  sig_str = '*';
-    else,                 sig_str = 'ns';
-    end
-    text(ax, 1.5, top*1.02, sig_str, 'Color','w','HorizontalAlignment','center','FontSize',12);
-end
+plot(ax, 1, mean(stim,'omitnan'),   'k+','MarkerSize',10,'LineWidth',2.5);
+plot(ax, 2, mean(nostim,'omitnan'), 'k+','MarkerSize',10,'LineWidth',2.5);
 
 set(ax,'XTick',[1 2],'XTickLabel',{'Stim','NoStim'});
 xlim(ax,[0.5 2.5]);
-ymax = max(all_vals,[],'omitnan') * 1.30;
+all_vals = [stim(:); nostim(:)];
+ymax = max(all_vals,[],'omitnan') * 1.20;
 if isfinite(ymax) && ymax > 0, ylim(ax,[0 ymax]); end
-ylabel(ax, sprintf('%s (p%d)', ylbl, amp_prc), 'Color','w');
-title(ax, sprintf('%s  p=%.3g (ranksum)', ylbl, p_val), 'Color','w');
+ylabel(ax, sprintf('%s (p%d)', ylbl, amp_prc), 'Color','k');
+title(ax, sprintf('%s  p=%.3g (ranksum)', ylbl, p_val), 'Color','k');
 end
 
 function plot_distribution_panel(ax, stim, nostim, c_stim, c_nostim, chan)
@@ -488,10 +475,10 @@ end
 xline(ax, mean(stim,'omitnan'),   '--','Color',c_stim,   'LineWidth',1.5,'HandleVisibility','off');
 xline(ax, mean(nostim,'omitnan'), '--','Color',c_nostim, 'LineWidth',1.5,'HandleVisibility','off');
 
-xlabel(ax, sprintf('%s amplitude', chan), 'Color','w');
-ylabel(ax, 'Count', 'Color','w');
-title(ax, sprintf('%s amplitude distribution', chan), 'Color','w');
-legend(ax,'TextColor','w','Color','k','Location','best');
+xlabel(ax, sprintf('%s amplitude', chan), 'Color','k');
+ylabel(ax, 'Count', 'Color','k');
+title(ax, sprintf('%s amplitude distribution', chan), 'Color','k');
+legend(ax,'TextColor','k','Color','white','EdgeColor','black','LineWidth',1,'Location','best');
 end
 
 function shade_ax(ax, t, mask, ylims, color, alpha)

@@ -24,12 +24,15 @@ noverlap = floor(0.5 * numel(window));
 [psd2_before, ~] = pwelch(ry2,          window, noverlap, nfft, fs);
  psd2_after       = pwelch(filteredRy2, window, noverlap, nfft, fs);
 
+% Get darker colors for better contrast on white background
+colors = get_emg_plot_colors();
+
 % ---- Plot ----
 figure;
 
 subplot(2,1,1);
-plot(f, 10*log10(psd1_before), 'r', ...
-     f, 10*log10(psd1_after),  'b', 'LineWidth', 1);
+plot(f, 10*log10(psd1_before), 'Color', [0.8 0 0], 'LineWidth', 1.5, 'DisplayName', 'Before filter'); hold on;
+plot(f, 10*log10(psd1_after),  'Color', colors.TA, 'LineWidth', 1.5, 'DisplayName', 'After filter');
 legend('Left TA Before','Left TA After');
 xlabel('Frequency (Hz)');
 ylabel('PSD (dB/Hz)');
@@ -37,8 +40,8 @@ title(sprintf('Welch PSD - Left TA (fs = %d Hz)', fs));
 grid on;
 
 subplot(2,1,2);
-plot(f, 10*log10(psd2_before), 'r', ...
-     f, 10*log10(psd2_after),  'b', 'LineWidth', 1);
+plot(f, 10*log10(psd2_before), 'Color', [0.8 0 0], 'LineWidth', 1.5, 'DisplayName', 'Before filter'); hold on;
+plot(f, 10*log10(psd2_after),  'Color', colors.MG, 'LineWidth', 1.5, 'DisplayName', 'After filter');
 legend('Left MG Before','Left MG After');
 xlabel('Frequency (Hz)');
 ylabel('PSD (dB/Hz)');

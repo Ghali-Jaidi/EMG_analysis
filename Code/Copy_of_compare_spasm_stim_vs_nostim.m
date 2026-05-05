@@ -1,4 +1,16 @@
 function out = Copy_of_compare_spasm_stim_vs_nostim(TT, snr, fs, varargin)
+% EXPERIMENTAL VERSION: Copy_of_compare_spasm_stim_vs_nostim
+%
+% This is an EXPERIMENTAL variant that uses a BASELINE-RELATIVE threshold method
+% for spasm detection (4x trailing RMS median) instead of the standard percentile-based
+% approach used in the original compare_spasm_stim_vs_nostim.m.
+%
+% Key differences from original:
+%   - Uses TA_f and MG_f (already-filtered signals) from timetable
+%   - Computes local RMS with 50ms window + 10s trailing median baseline
+%   - Thresholds: signal > 4x baseline (adaptive, relative detection)
+%   - More sensitive to acute amplitude changes
+%
 % compare_spasm_stim_vs_nostim
 %
 % Detects spasms, splits them into stimulated (overlapping Ch3 ON) and
@@ -61,34 +73,47 @@ is_act_TA = snr.is_act(:);
 is_act_MG = snr.is_act_MG(:);
 
 %% ================================================================
-%  2. SPASM DETECTION  (same logic as spasm_gait_stim_analysis)
+%  2. SPASM DETECTION (EXPERIMENTAL: Baseline-relative method)
 %% ================================================================
-filter_order = 60;
-bp_fir = fir1(filter_order, [80 400]/(fs/2), 'bandpass');
+% Get filtered signals from timetable
+TA_filt = TT.TA_f(:);
+MG_filt = TT.MG_f(:);
 
-TA_filt_rt = filter(bp_fir, 1, TT.TA_filt(:));
-MG_filt_rt = filter(bp_fir, 1, TT.MG_filt(:));
-
+% --- Causal local RMS (50ms window) ---
 win = round(0.050 * fs);
-TA_rms = sqrt(movmean(TA_filt_rt.^2, [win-1, 0]));
-MG_rms = sqrt(movmean(MG_filt_rt.^2, [win-1, 0]));
+TA_rms = sqrt(movmean(TA_filt.^2, [win-1, 0]));
+MG_rms = sqrt(movmean(MG_filt.^2, [win-1, 0]));
 
+% --- Adaptive baseline (10s trailing median) ---
 bwin = round(10 * fs);
 TA_baseline = movmedian(TA_rms, [bwin, 0]);
 MG_baseline = movmedian(MG_rms, [bwin, 0]);
 
-thresh_factor = 4.0;
+% --- Threshold: 6x trailing baseline (increased from 4x for robustness) ---
+% AND: require signal > 95th percentile of active samples (anti-gait filter)
+% This ensures: high amplitude relative to baseline AND extreme peak values
+thresh_factor = 6.0;  % Increased from 4.0 to reduce gait false positives
 thr_spasm_TA = thresh_factor;
 thr_spasm_MG = thresh_factor;
-fprintf('Spasm thresholds  ->  TA: %.4f x baseline   MG: %.4f x baseline\n', thr_spasm_TA, thr_spasm_MG);
 
-is_spasm_raw = (TA_rms > thresh_factor * TA_baseline) | ...
-               (MG_rms > thresh_factor * MG_baseline);
+% Compute 95th percentile thresholds on active samples for anti-gait filtering
+prc_TA = prctile(TA_env(is_act_TA & isfinite(TA_env)), 95);
+prc_MG = prctile(MG_env(is_act_MG & isfinite(MG_env)), 95);
+
+fprintf('Spasm thresholds  ->  TA: %.4f x baseline (+ >%.4f amplitude)  MG: %.4f x baseline (+ >%.4f amplitude) (ROBUST)\n', ...
+    thr_spasm_TA, prc_TA, thr_spasm_MG, prc_MG);
+
+% Both conditions must be met: high relative amplitude AND extreme peak
+is_spasm_raw = ((TA_rms > thresh_factor * TA_baseline) & (TA_env >= prc_TA)) | ...
+               ((MG_rms > thresh_factor * MG_baseline) & (MG_env >= prc_MG));
 is_spasm_raw(~isfinite(TA_rms) & ~isfinite(MG_rms)) = false;
 
 min_spasm_smp = max(1, round(opt.SpasmMinDurS * fs));
 is_spasm = keep_long_runs(is_spasm_raw, min_spasm_smp);
-is_spasm = fuse_masks(is_spasm, fs, opt.FuseGapMs * 10);
+
+% Fuse nearby spasms (within 500 ms gap) to connect fragmented detections
+fuse_gap_ms = max(500, opt.FuseGapMs * 10);  % Increased fusion window for robustness
+is_spasm = fuse_masks(is_spasm, fs, fuse_gap_ms);
 
 % Enumerate spasm bouts
 d_sp      = diff([false; is_spasm; false]);

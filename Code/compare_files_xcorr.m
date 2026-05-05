@@ -68,11 +68,23 @@ if isempty(Rin)
         if isequal(f,0), error('Cancelled'); end
         fullFile = fullfile(pth,f);
     
-        [TT, snrV, meta] = preprocess_and_label(fs, ...
-            'fullFile', fullFile, ...
-            'plot_figures', false, ...
-            'save_figures', false, ...
-            'use_envelope', use_env);
+        P = default_emg_parameters();
+        options = struct();
+        options.envWindowMs = P.envWindowMs;
+        options.thresholds = P.thresholds;
+        options.min_quiet_dur_ms = P.min_quiet_dur_ms;
+        options.fuse_gap_ms = P.fuse_gap_ms;
+        options.snr_win_ms = P.snr_win_ms;
+        options.act_prc = P.act_prc;
+        options.act_prc_MG = P.act_prc_MG;
+        options.plot_figures = false;
+        options.save_figures = false;
+        options.fig_folder = 'Figures';
+        options.use_envelope = use_env;
+        options.fullFile = fullFile;
+        options.recID = NaN;
+
+        [TT, snrV, meta] = preprocess_and_label(fs, options);
 
         tag = sprintf('%s (rec %d)', f, meta.recID);
         [condLabel, intervals] = ask_condition_and_intervals(tag);

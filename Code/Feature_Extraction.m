@@ -3,6 +3,9 @@
 %% =========================
 clear; clc;
 
+% Apply white background style for all figures
+set_white_background_style();
+
 fs = 10000;
 max_lag_s = 2.0;
 
@@ -17,6 +20,18 @@ run_stim_compare = strcmp(ans2, 'Yes');
 
 if ~run_group_compare && ~run_stim_compare
     error('Nothing selected.');
+end
+
+%% ---- Ask about parameter handling ----
+ans_params = questdlg(['How would you like to handle processing parameters?'], ...
+    'Parameter Strategy', ...
+    'Use best params per file', 'Use defaults for all', 'Use best params per file');
+use_best_params_per_file = strcmp(ans_params, 'Use best params per file');
+
+if use_best_params_per_file
+    fprintf('\n*** MODE: Using best parameters for each recording (if available) ***\n');
+else
+    fprintf('\n*** MODE: Using default parameters for all recordings ***\n');
 end
 
 %% ============================================================
@@ -63,22 +78,37 @@ if run_group_compare
         fullFile = fullfile(p,f);
         fprintf('\n=== [%d/%d] Processing: %s ===\n', k, nFiles, fullFile);
 
-        % --- Load params if a _param file exists, otherwise use defaults ---
+        % --- Load params based on user choice ---
         [~, srcName, ~] = fileparts(f);
         paramFile = fullfile(p, [srcName, '_param.mat']);
-        if isfile(paramFile)
+        
+        if use_best_params_per_file && isfile(paramFile)
             fprintf('    Found param file: %s\n', paramFile);
             tmp = load(paramFile, 'P');
             P = tmp.P;
         else
-            fprintf('    No param file found, using defaults.\n');
+            if use_best_params_per_file && ~isfile(paramFile)
+                fprintf('    No param file found for this recording, using defaults.\n');
+            end
             P = default_emg_parameters();
         end
 
-        [TTk, snrk, metak] = preprocess_and_label(P, fs, ...
-            'fullFile', fullFile, ...
-            'plot_figures', false, ...
-            'save_figures', false);
+        options = struct();
+        options.envWindowMs = P.envWindowMs;
+        options.thresholds = P.thresholds;
+        options.min_quiet_dur_ms = P.min_quiet_dur_ms;
+        options.fuse_gap_ms = P.fuse_gap_ms;
+        options.snr_win_ms = P.snr_win_ms;
+        options.act_prc = P.act_prc;
+        options.act_prc_MG = P.act_prc_MG;
+        options.plot_figures = false;
+        options.save_figures = false;
+        options.fig_folder = 'Figures';
+        options.use_envelope = P.use_envelope;
+        options.fullFile = fullFile;
+        options.recID = NaN;
+
+        [TTk, snrk, metak] = preprocess_and_label(fs, options);
 
         tag = sprintf('%s (rec %d)', f, metak.recID);
         [condk, intervalsk] = ask_condition_and_intervals(tag);
@@ -323,6 +353,12 @@ if run_stim_compare
     MG_signals  = {};
     Ch3_signals = {};
 
+    %% ---- Initialize options struct for stim analysis ----
+    options = struct();
+    options.plot_figures = false;
+    options.save_figures = false;
+    options.fig_folder = 'Figures';
+
     for k = 1:nStimFiles
         msg = sprintf(['Select recording %d of %d for stim ON/OFF comparison.\n' ...
                        'Select ONE experiment MAT file.'], k, nStimFiles);
@@ -334,22 +370,38 @@ if run_stim_compare
         fullFile = fullfile(p,f);
         fprintf('\n=== [%d/%d] Stim analysis: %s ===\n', k, nStimFiles, fullFile);
 
-        % --- Load params if a _param file exists, otherwise use defaults ---
+        % --- Load params based on user's choice from earlier prompt ---
         [~, srcName, ~] = fileparts(f);
         paramFile = fullfile(p, [srcName, '_param.mat']);
-        if isfile(paramFile)
-            fprintf('    Found param file: %s\n', paramFile);
+        
+        if use_best_params_per_file && isfile(paramFile)
+            fprintf('    Found param file (using best params mode): %s\n', paramFile);
             tmp = load(paramFile, 'P');
             P = tmp.P;
         else
-            fprintf('    No param file found, using defaults.\n');
+            if use_best_params_per_file
+                fprintf('    No param file found (using best params mode), falling back to defaults.\n');
+            else
+                fprintf('    Using default parameters (as selected by user).\n');
+            end
             P = default_emg_parameters();
         end
 
-        [TTk, ~, metak] = preprocess_and_label(P, fs, ...
-            'fullFile', fullFile, ...
-            'plot_figures', false, ...
-            'save_figures', false);
+        options.envWindowMs = P.envWindowMs;
+        options.thresholds = P.thresholds;
+        options.min_quiet_dur_ms = P.min_quiet_dur_ms;
+        options.fuse_gap_ms = P.fuse_gap_ms;
+        options.snr_win_ms = P.snr_win_ms;
+        options.act_prc = P.act_prc;
+        options.act_prc_MG = P.act_prc_MG;
+        options.plot_figures = false;
+        options.save_figures = false;
+        options.fig_folder = 'Figures';
+        options.use_envelope = P.use_envelope;
+        options.fullFile = fullFile;
+        options.recID = NaN;
+
+        [TTk, ~, metak] = preprocess_and_label(fs, options);
 
         ta_full  = TTk.TA_env;
         mg_full  = TTk.MG_env;

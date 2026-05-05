@@ -1,28 +1,43 @@
-function [TT_clean, snrValue, meta, preview] = preprocess_and_label( P, fs, options)
+function [TT_clean, snrValue, meta] = preprocess_and_label(varargin)
 % run_emg_analysis
 % Runs your EMG pipeline. Can optionally suppress all plotting.
 %
 % Added option:
 %   options.plot_figures (logical) : if false, no plots are created/saved.
 
-arguments
-    P = default_emg_parameters()
-    fs (1,1) double {mustBePositive} = 10000
-    options.plot_figures (1,1) logical = true   
-    options.save_figures (1,1) logical = false
-    options.fig_folder (1,:) char = 'Figures'
+% Handle optional arguments
+% Parse options struct if passed
+    if nargin > 0 && isstruct(varargin{end})
+        options = varargin{end};
+        varargin(end) = [];
+    else
+        options = struct();
+    end
 
-    % Optional: provide file + recording to skip UI
-    options.fullFile (1,:) char = ''
-    options.recID (1,1) double = NaN
-    
-end
+    % Set default for fs
+    if numel(varargin) >= 1 && ~isempty(varargin{1})
+        fs = varargin{1};
+    else
+        fs = 10000;  % default
+    end
 
-if isempty(P) 
-   
-end
+% Set defaults for options fields
+if ~isfield(options, 'envWindowMs'), options.envWindowMs = 3; end
+if ~isfield(options, 'thresholds'), options.thresholds = [40 50]; end
+if ~isfield(options, 'min_quiet_dur_ms'), options.min_quiet_dur_ms = 10; end
+if ~isfield(options, 'fuse_gap_ms'), options.fuse_gap_ms = 10; end
+if ~isfield(options, 'snr_win_ms'), options.snr_win_ms = 20; end
+if ~isfield(options, 'act_prc'), options.act_prc = 50; end
+if ~isfield(options, 'act_prc_MG'), options.act_prc_MG = 50; end
+if ~isfield(options, 'plot_figures'), options.plot_figures = true; end
+if ~isfield(options, 'save_figures'), options.save_figures = false; end
+if ~isfield(options, 'fig_folder'), options.fig_folder = 'Figures'; end
+if ~isfield(options, 'use_envelope'), options.use_envelope = true; end
+if ~isfield(options, 'fullFile'), options.fullFile = ''; end
+if ~isfield(options, 'recID'), options.recID = NaN; end
+if ~isfield(options, 'detect_valid_acq'), options.detect_valid_acq = true; end
 
-min_quiet_samples = round(P.min_quiet_dur_ms/1000 * fs);
+min_quiet_samples = round(options.min_quiet_dur_ms/1000 * fs);
 
 
 %% ---- Select experiment file (unless provided) ----
@@ -106,7 +121,7 @@ end
 TT.TA_rect = abs(TT.TA_f);
 TT.MG_rect = abs(TT.MG_f);
 
-envWindowSamples = max(1, round((P.envWindowMs/1000) * fs));
+envWindowSamples = max(1, round((options.envWindowMs/1000) * fs));
 b = ones(envWindowSamples,1) / envWindowSamples;
 TT.TA_env = filtfilt(b, 1, TT.TA_rect);
 TT.MG_env = filtfilt(b, 1, TT.MG_rect);
@@ -121,30 +136,27 @@ valid_opts.min_channels_req  = 2;
 valid_opts.quiet_before_s    = 0.5;
 valid_opts.env_mult          = 3;
 valid_opts.fallback_full_valid = true;
-valid_opts.plot_debug          = true;
+valid_opts.plot_debug          = false; 
 
-if isfield(P, 'startTime') && ~isempty(P.startTime)
-    % Use manually set start time, skip detection entirely
-    startSample = max(1, round(P.startTime * fs));
-    fprintf('    Using manual startTime = %.3f s (sample %d), skipping detect_valid_acquisition_start.\n', ...
-        P.startTime, startSample);
-    is_valid_acq = false(size(TT.TA_f));
-    is_valid_acq(startSample:end) = true;
-
-elseif P.detect_acq_start
+% Only detect valid acquisition if option is enabled
+if options.detect_valid_acq
+    fprintf('Running valid acquisition detection...\n');
     [is_valid_acq, ~] = detect_valid_acquisition_start( ...
-        TT.TA_f, TT.MG_f, TT.TA_env, TT.MG_env, fs, valid_opts);
-
+      TT.TA_f, TT.MG_f, TT.TA_env, TT.MG_env, fs, valid_opts);
     if ~any(is_valid_acq)
-        warning('Acquisition start not detected for this recording. Using full signal.');
+        warning('Acquisition start not detected; using full recording as valid.');
         is_valid_acq = true(size(TT.TA_f));
     end
 else
+    % If detection is disabled, mark entire recording as valid
     is_valid_acq = true(size(TT.TA_f));
+    fprintf('Valid acquisition detection DISABLED; using full recording.\n');
 end
 
+
+
 %% ---- Choose amplitude signal for rest/SNR ----
-if P.use_envelope
+if options.use_envelope
     TA = TT.TA_env;
     MG = TT.MG_env;
 else
@@ -158,8 +170,8 @@ MG_valid = MG(is_valid_acq);
 
 %% ---- Rest masks (unclean) ----
 
-[is_quiet_TA_valid, thresh_quiet_TA] = find_quiet_mask(TA_valid, P.thresholds, 'TA');
-[is_quiet_MG_valid, thresh_quiet_MG] = find_quiet_mask(MG_valid, P.thresholds, 'MG');
+[is_quiet_TA_valid, thresh_quiet_TA] = find_quiet_mask(TA_valid, options.thresholds, 'TA');
+[is_quiet_MG_valid, thresh_quiet_MG] = find_quiet_mask(MG_valid, options.thresholds, 'MG');
 
 % Map back to full timeline
 is_quiet_TA = false(size(TA));
@@ -167,8 +179,8 @@ is_quiet_MG = false(size(MG));
 is_quiet_TA(is_valid_acq) = is_quiet_TA_valid;
 is_quiet_MG(is_valid_acq) = is_quiet_MG_valid;
 
-is_rest_TA_unclean = fuse_masks(keep_long_runs(is_quiet_TA, min_quiet_samples), fs, P.fuse_gap_ms);
-is_rest_MG_unclean = fuse_masks(keep_long_runs(is_quiet_MG, min_quiet_samples), fs, P.fuse_gap_ms);
+is_rest_TA_unclean = fuse_masks(keep_long_runs(is_quiet_TA, min_quiet_samples), fs, options.fuse_gap_ms);
+is_rest_MG_unclean = fuse_masks(keep_long_runs(is_quiet_MG, min_quiet_samples), fs, options.fuse_gap_ms);
 
 is_rest_TA_unclean(~is_valid_acq) = false;
 is_rest_MG_unclean(~is_valid_acq) = false;
@@ -181,13 +193,13 @@ if ~any(is_rest_MG_unclean), noise_rms_MG = NaN; end
 fprintf("TA_valid length: %d\n", length(TA_valid));
 fprintf("Quiet TA samples: %d\n", sum(is_quiet_TA_valid));
 fprintf("TA percentiles: %.3f %.3f %.3f\n", prctile(TA_valid,[10 40 80]));
-snr_pre = snr_emg(TA, is_rest_TA_unclean, fs, P.snr_win_ms, P.act_prc, ...
+snr_pre = snr_emg(TA, is_rest_TA_unclean, fs, options.snr_win_ms, options.act_prc, ...
     'xMG', MG, ...
     'is_rest_MG', is_rest_MG_unclean, ...
-    'act_prc_MG', P.act_prc_MG, ...
+    'act_prc_MG', options.act_prc_MG, ...
     'valid_mask', is_valid_acq);
-snr_pre.is_act    = fuse_masks(snr_pre.is_act,    fs, P.fuse_gap_ms);
-snr_pre.is_act_MG = fuse_masks(snr_pre.is_act_MG, fs, P.fuse_gap_ms);
+snr_pre.is_act    = fuse_masks(snr_pre.is_act,    fs, options.fuse_gap_ms);
+snr_pre.is_act_MG = fuse_masks(snr_pre.is_act_MG, fs, options.fuse_gap_ms);
 snr_pre.thr_rest    = thresh_quiet_TA;
 snr_pre.thr_rest_MG = thresh_quiet_MG;
 snr_pre.is_act(~is_valid_acq) = false;
@@ -218,7 +230,7 @@ TT_clean.TA_env = filtfilt(b, 1, TT_clean.TA_rect);
 TT_clean.MG_env = filtfilt(b, 1, TT_clean.MG_rect);
 
 %% ---- Choose cleaned amplitude signal consistently ----
-if P.use_envelope
+if options.use_envelope
     TA_clean = TT_clean.TA_env;
     MG_clean = TT_clean.MG_env;
 else
@@ -235,22 +247,22 @@ is_rest_MG_clean = is_rest_MG_unclean;
 is_rest_TA_clean(bad_seg) = false;
 is_rest_MG_clean(bad_seg) = false;
 
-is_rest_TA_clean = fuse_masks(is_rest_TA_clean, fs, P.fuse_gap_ms);
-is_rest_MG_clean = fuse_masks(is_rest_MG_clean, fs, P.fuse_gap_ms);
+is_rest_TA_clean = fuse_masks(is_rest_TA_clean, fs, options.fuse_gap_ms);
+is_rest_MG_clean = fuse_masks(is_rest_MG_clean, fs, options.fuse_gap_ms);
 is_rest_TA_clean(~is_valid_acq) = false;
 is_rest_MG_clean(~is_valid_acq) = false;
 
 assert(numel(is_rest_TA_clean) == height(TT_clean), "Rest mask length mismatch with TT_clean.");
 %% ---- Final SNR (uses chosen TA_clean/MG_clean) ----
-snrValue = snr_emg(TA_clean, is_rest_TA_clean, fs, P.snr_win_ms, P.act_prc, ...
+snrValue = snr_emg(TA_clean, is_rest_TA_clean, fs, options.snr_win_ms, options.act_prc, ...
     'xMG', MG_clean, ...
     'is_rest_MG', is_rest_MG_clean, ...
-    'act_prc_MG', P.act_prc_MG, ...
+    'act_prc_MG', options.act_prc_MG, ...
     'valid_mask', is_valid_acq);
     
 % ---- Fuse active and rest masks (merge close bursts; no keep_long_runs for active parts) ----
-snrValue.is_act    = fuse_masks(snrValue.is_act,    fs, P.fuse_gap_ms);
-snrValue.is_act_MG = fuse_masks(snrValue.is_act_MG, fs, P.fuse_gap_ms);
+snrValue.is_act    = fuse_masks(snrValue.is_act,    fs, options.fuse_gap_ms);
+snrValue.is_act_MG = fuse_masks(snrValue.is_act_MG, fs, options.fuse_gap_ms);
 snrValue.is_rest     = is_rest_TA_clean;
 snrValue.is_rest_MG  = is_rest_MG_clean;
 snrValue.thr_rest    = thresh_quiet_TA;
@@ -265,33 +277,32 @@ snrValue.is_rest_MG(~is_valid_acq) = false;
 overlap_TA = snrValue.is_act & snrValue.is_rest;
 overlap_MG = snrValue.is_act_MG & snrValue.is_rest_MG;
 
-
-snrValue.is_rest(overlap_TA) = false; 
-snrValue.is_rest_MG(overlap_MG) = false;
-
-if P.use_envelope
-    TA_plot = TT_clean.TA_env .* sign(TT_clean.TA_f);
-    MG_plot = TT_clean.MG_env .* sign(TT_clean.MG_f);
-else
-    TA_plot = TT_clean.TA_f;
-    MG_plot = TT_clean.MG_f;
-end
+snrValue.is_act(overlap_TA) = false;
+snrValue.is_act_MG(overlap_MG) = false;
 
 if options.plot_figures
     fprintf('SNR -> TA: %.2f (%.2f dB)   MG: %.2f (%.2f dB)\n', ...
         snrValue.SNR_TA, snrValue.SNR_dB, snrValue.SNR_MG, snrValue.SNR_MG_dB);
 
     figure;
-    subplot(2,1,1);
-    plot_amplitudes(TT.TA_f(is_valid_acq), 'NumBins', 100, 'Axes', gca, ...
-        'ThrAct', snrValue.thr_act, 'NoiseRMS', noise_rms_TA);
-    title('Left TA - Amplitude Distribution (unrectified)');
+    ax1 = subplot(2,1,1);
+    ax2 = subplot(2,1,2);
+    
+    plot_amplitudes(TT.TA_f(is_valid_acq), 'NumBins', 100, 'Axes', ax1, ...
+        'ThrAct', snrValue.thr_act, 'NoiseRMS', noise_rms_TA, 'LinkedAxes', ax2);
+    title(ax1, 'Left TA - Amplitude Distribution (unrectified)');
 
-    subplot(2,1,2);
-    plot_amplitudes(TT.MG_f(is_valid_acq), 'NumBins', 100, 'Axes', gca, ...
-        'ThrAct', snrValue.thr_act_MG, 'NoiseRMS', noise_rms_MG);
-    title('Left MG - Amplitude Distribution (unrectified)');
+    plot_amplitudes(TT.MG_f(is_valid_acq), 'NumBins', 100, 'Axes', ax2, ...
+        'ThrAct', snrValue.thr_act_MG, 'NoiseRMS', noise_rms_MG, 'LinkedAxes', ax1);
+    title(ax2, 'Left MG - Amplitude Distribution (unrectified)');
 
+    if options.use_envelope
+        TA_plot = TT_clean.TA_env .* sign(TT_clean.TA_f);
+        MG_plot = TT_clean.MG_env .* sign(TT_clean.MG_f);
+    else
+        TA_plot = TT_clean.TA_f;
+        MG_plot = TT_clean.MG_f;
+    end
     
     plot_filtered_labeled(TA_plot, MG_plot, TT_clean.Ch3, ...
         seconds(TT_clean.tDur), snrValue);
@@ -328,7 +339,7 @@ if options.plot_figures
     ylabel(ax,'Amplitude');
     title(ax,'Overlap highlighted (TA & MG active)');
 
-end
+    end
 
 %% ---- Save figures (optional) ----
 if options.plot_figures && options.save_figures
@@ -338,7 +349,6 @@ if options.plot_figures && options.save_figures
     savefig(findall(0,'Type','figure'), figFile);
     fprintf('Figures saved to: %s\n', figFile);
 end
-
 
 %% ---- Meta ----
 meta = struct();
@@ -354,16 +364,6 @@ meta.is_rest_TA_unclean = is_rest_TA_unclean;
 meta.is_rest_MG_unclean = is_rest_MG_unclean;
 meta.bad_seg = bad_seg;
 meta.is_valid = is_valid_acq;
-
-preview.t = seconds(TT_clean.tDur);
-preview.TA_plot = TA_plot;
-preview.MG_plot = MG_plot;
-preview.Ch3 = TT_clean.Ch3;
-preview.is_act_TA = snrValue.is_act;
-preview.is_act_MG = snrValue.is_act_MG;
-preview.is_rest_TA = snrValue.is_rest;
-preview.is_rest_MG = snrValue.is_rest_MG;
-preview.is_valid = meta.is_valid;
 
 end
 
