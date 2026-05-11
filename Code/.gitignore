@@ -1,0 +1,28 @@
+# MATLAB generated
+*.fig
+*.asv
+*.mlappinstall
+*.mex*
+.matlab/
+*.mexa64
+*.mexmaci64
+*~
+
+# Results / Figures
+Figures/
+LabChart_protocol_results/
+results/
+*.csv
+*.png
+*.pdf
+
+# macOS
+.DS_Store
+
+# Python / node artifacts (if any)
+__pycache__/
+node_modules/
+
+# Ignore large .mat outputs (but keep source files out of this rule if needed)
+# Uncomment the following line if you store generated mats in the repo
+# *.mat
