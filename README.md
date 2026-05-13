@@ -115,7 +115,7 @@ Choose which signal representation to use:
 | Basis | Description | Best For |
 |-------|-------------|----------|
 | **raw** | Unfiltered 10 kHz signals | Spectral analysis, LabChart parity |
-| **filtered** | Butterworth bandpass (20–450 Hz) | Envelope extraction, spasm detection |
+| **filtered** | Butterworth bandpass (5–500 Hz) | Envelope extraction, spasm detection |
 | **rectified** | Absolute value of filtered signal | Legacy compatibility |
 
 **Default:** `raw` (recommended for most applications)
