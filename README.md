@@ -87,7 +87,7 @@ Code/
 - **See:** `analysis/frequency_analysis/README.md`
 
 ### 4️⃣ Feature Extraction
-**Create machine-learning ready features** for classification and statistical analysis.
+**Create features** for classification and statistical analysis.
 
 - **Input:** Preprocessed TT structure
 - **Output:** Feature table (amplitude, RMS, frequency content, entropy, correlation)
@@ -210,7 +210,7 @@ New to EMG analysis? Here's where to start:
 ### Deep Dives by Analysis Type
 - **analysis/spasm_detection/README.md** – Spasm event detection algorithms
 - **analysis/frequency_analysis/README.md** – Band-power computation and LabChart parity
-- **analysis/feature_extraction/README.md** – Machine-learning feature preparation
+- **analysis/feature_extraction/README.md** –  feature preparation
 
 ### Implementation Details
 - **plotting/README.md** – Publication-ready visualization techniques
@@ -246,11 +246,11 @@ main
 → View 100–500 Hz band power and generate CSV
 ```
 
-### Workflow 4: Extract ML Features
+### Workflow 4: Extract Features
 ```matlab
 main
 → Select option 4 (Feature extraction)
-→ Get feature table ready for machine learning
+→ Get feature table ready for spasm identification
 → Export to CSV
 ```
 
