@@ -8,11 +8,15 @@ arguments
     ax = []  % This argument is kept for compatibility but not used
 end
 
+fprintf('[plot_filtered_labeled] Starting - ch1=%d, ch2=%d, ch3=%d, t=%d\n', ...
+    length(channel_1), length(channel_2), length(channel_3), length(t));
+
 if ~isempty(ax) && isvalid(ax)
     % Clear the provided axes
     cla(ax);
 else
     % Create new figure with 3 subplots
+    fprintf('[plot_filtered_labeled] Creating new figure\n');
     figure;
 end
 
@@ -38,64 +42,86 @@ act_idx_TA  = snrValue.is_act(:);
 act_idx_MG  = snrValue.is_act_MG(:);
 
 % ---- Subplot 1: TA with activity masks ----
-subplot(3, 1, 1); hold on;
-% Highlight active/rest regions
-plot_mask_regions_normalized(gca, t, act_idx_TA, [1 1 0], 'Active');
-plot_mask_regions_normalized(gca, t, rest_idx_TA, [1 0.85 0.85], 'Rest');
-% Plot signal
-plot(t, ch1_norm, 'g', 'LineWidth', 1, 'DisplayName', 'TA (filtered)');
-% Threshold lines
-ch1_thr_norm_rest = (snrValue.thr_rest - ch1_min) / (ch1_max - ch1_min);
-ch1_thr_norm_act = (snrValue.thr_act - ch1_min) / (ch1_max - ch1_min);
-yline(ch1_thr_norm_rest, '--k', 'LineWidth', 1.5, 'DisplayName', 'Rest threshold');
-yline(ch1_thr_norm_act, '--r', 'LineWidth', 1.5, 'DisplayName', 'Active threshold');
-ylabel('Amplitude (V)');
-title('TA (Tibialis Anterior)');
-grid on; box on;
-ch1_ticks_voltage = compute_logical_ticks(ch1_min, ch1_max);
-ch1_ticks_norm = (ch1_ticks_voltage - ch1_min) / (ch1_max - ch1_min);
-set(gca, 'YLim', [0 1]);
-set(gca, 'YTick', ch1_ticks_norm);
-set(gca, 'YTickLabel', arrayfun(@(x) sprintf('%.3f', x), ch1_ticks_voltage, 'UniformOutput', false));
-legend('Location', 'best');
-hold off;
+try
+    fprintf('[plot_filtered_labeled] Plotting subplot 1...\n');
+    subplot(3, 1, 1); hold on;
+    % Highlight active/rest regions
+    plot_mask_regions_normalized(gca, t, act_idx_TA, [1 1 0], 'Active');
+    plot_mask_regions_normalized(gca, t, rest_idx_TA, [1 0.85 0.85], 'Rest');
+    % Plot signal
+    plot(t, ch1_norm, 'g', 'LineWidth', 1, 'DisplayName', 'TA (filtered)');
+    % Threshold lines
+    ch1_thr_norm_rest = (snrValue.thr_rest - ch1_min) / (ch1_max - ch1_min);
+    ch1_thr_norm_act = (snrValue.thr_act - ch1_min) / (ch1_max - ch1_min);
+    yline(ch1_thr_norm_rest, '--k', 'LineWidth', 1.5, 'DisplayName', 'Rest threshold');
+    yline(ch1_thr_norm_act, '--r', 'LineWidth', 1.5, 'DisplayName', 'Active threshold');
+    ylabel('Amplitude (V)');
+    title('TA (Tibialis Anterior)');
+    grid on; box on;
+    ch1_ticks_voltage = compute_logical_ticks(ch1_min, ch1_max);
+    ch1_ticks_norm = (ch1_ticks_voltage - ch1_min) / (ch1_max - ch1_min);
+    set(gca, 'YLim', [0 1]);
+    set(gca, 'YTick', ch1_ticks_norm);
+    set(gca, 'YTickLabel', arrayfun(@(x) sprintf('%.3f', x), ch1_ticks_voltage, 'UniformOutput', false));
+    % Skip legend to avoid graphics tree modification errors
+    hold off;
+    fprintf('[plot_filtered_labeled] Subplot 1 completed\n');
+catch ME
+    fprintf('[plot_filtered_labeled ERROR] Subplot 1 failed: %s\n', ME.message);
+    disp(ME.stack);
+end
 
 % ---- Subplot 2: MG with activity masks ----
-subplot(3, 1, 2); hold on;
-% Highlight active/rest regions
-plot_mask_regions_normalized(gca, t, act_idx_MG, [1 1 0], 'Active');
-plot_mask_regions_normalized(gca, t, rest_idx_MG, [0.85 0.85 1], 'Rest');
-% Plot signal
-plot(t, ch2_norm, 'b', 'LineWidth', 1, 'DisplayName', 'MG (filtered)');
-% Threshold lines
-ch2_thr_norm_rest = (snrValue.thr_rest_MG - ch2_min) / (ch2_max - ch2_min);
-ch2_thr_norm_act = (snrValue.thr_act_MG - ch2_min) / (ch2_max - ch2_min);
-yline(ch2_thr_norm_rest, '--k', 'LineWidth', 1.5, 'DisplayName', 'Rest threshold');
-yline(ch2_thr_norm_act, '--r', 'LineWidth', 1.5, 'DisplayName', 'Active threshold');
-ylabel('Amplitude (V)');
-title('MG (Medial Gastrocnemius)');
-grid on; box on;
-ch2_ticks_voltage = compute_logical_ticks(ch2_min, ch2_max);
-ch2_ticks_norm = (ch2_ticks_voltage - ch2_min) / (ch2_max - ch2_min);
-set(gca, 'YLim', [0 1]);
-set(gca, 'YTick', ch2_ticks_norm);
-set(gca, 'YTickLabel', arrayfun(@(x) sprintf('%.3f', x), ch2_ticks_voltage, 'UniformOutput', false));
-legend('Location', 'best');
-hold off;
+try
+    fprintf('[plot_filtered_labeled] Plotting subplot 2...\n');
+    subplot(3, 1, 2); hold on;
+    % Highlight active/rest regions
+    plot_mask_regions_normalized(gca, t, act_idx_MG, [1 1 0], 'Active');
+    plot_mask_regions_normalized(gca, t, rest_idx_MG, [0.85 0.85 1], 'Rest');
+    % Plot signal
+    plot(t, ch2_norm, 'b', 'LineWidth', 1, 'DisplayName', 'MG (filtered)');
+    % Threshold lines
+    ch2_thr_norm_rest = (snrValue.thr_rest_MG - ch2_min) / (ch2_max - ch2_min);
+    ch2_thr_norm_act = (snrValue.thr_act_MG - ch2_min) / (ch2_max - ch2_min);
+    yline(ch2_thr_norm_rest, '--k', 'LineWidth', 1.5, 'DisplayName', 'Rest threshold');
+    yline(ch2_thr_norm_act, '--r', 'LineWidth', 1.5, 'DisplayName', 'Active threshold');
+    ylabel('Amplitude (V)');
+    title('MG (Medial Gastrocnemius)');
+    grid on; box on;
+    ch2_ticks_voltage = compute_logical_ticks(ch2_min, ch2_max);
+    ch2_ticks_norm = (ch2_ticks_voltage - ch2_min) / (ch2_max - ch2_min);
+    set(gca, 'YLim', [0 1]);
+    set(gca, 'YTick', ch2_ticks_norm);
+    set(gca, 'YTickLabel', arrayfun(@(x) sprintf('%.3f', x), ch2_ticks_voltage, 'UniformOutput', false));
+    % Skip legend to avoid graphics tree modification errors
+    fprintf('[plot_filtered_labeled] Subplot 2 completed\n');
+catch ME
+    fprintf('[plot_filtered_labeled ERROR] Subplot 2 failed: %s\n', ME.message);
+    disp(ME.stack);
+end
 
 % ---- Subplot 3: Channel 3 (raw) ----
-subplot(3, 1, 3);
-plot(t, ch3_norm, 'r', 'LineWidth', 1, 'DisplayName', 'Channel 3 (raw)');
-ylabel('Amplitude (V)');
-xlabel('Time (s)');
-title('Channel 3');
-grid on; box on;
-ch3_ticks_voltage = compute_logical_ticks(ch3_min, ch3_max);
-ch3_ticks_norm = (ch3_ticks_voltage - ch3_min) / (ch3_max - ch3_min);
-set(gca, 'YLim', [0 1]);
-set(gca, 'YTick', ch3_ticks_norm);
-set(gca, 'YTickLabel', arrayfun(@(x) sprintf('%.3f', x), ch3_ticks_voltage, 'UniformOutput', false));
-legend('Location', 'best');
+try
+    fprintf('[plot_filtered_labeled] Plotting subplot 3...\n');
+    subplot(3, 1, 3);
+    plot(t, ch3_norm, 'r', 'LineWidth', 1, 'DisplayName', 'Channel 3 (raw)');
+    ylabel('Amplitude (V)');
+    xlabel('Time (s)');
+    title('Channel 3');
+    grid on; box on;
+    ch3_ticks_voltage = compute_logical_ticks(ch3_min, ch3_max);
+    ch3_ticks_norm = (ch3_ticks_voltage - ch3_min) / (ch3_max - ch3_min);
+    set(gca, 'YLim', [0 1]);
+    set(gca, 'YTick', ch3_ticks_norm);
+    set(gca, 'YTickLabel', arrayfun(@(x) sprintf('%.3f', x), ch3_ticks_voltage, 'UniformOutput', false));
+    % Skip legend to avoid graphics tree modification errors
+    fprintf('[plot_filtered_labeled] Subplot 3 completed\n');
+catch ME
+    fprintf('[plot_filtered_labeled ERROR] Subplot 3 failed: %s\n', ME.message);
+    disp(ME.stack);
+end
+
+fprintf('[plot_filtered_labeled] All subplots completed\n');
 
 end
 

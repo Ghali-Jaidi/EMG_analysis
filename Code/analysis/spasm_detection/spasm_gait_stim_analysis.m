@@ -37,6 +37,7 @@ p.addParameter('FuseGapMs',       50,    @(x) isnumeric(x) && isscalar(x));
 p.addParameter('Ch3Threshold',    [],    @(x) isempty(x) || (isnumeric(x) && isscalar(x)));
 p.addParameter('Ch3MinOnMs',      100,   @(x) isnumeric(x) && isscalar(x));
 p.addParameter('PlotResult',      false,  @(x) islogical(x) && isscalar(x));
+p.addParameter('PlotDownsample',  10,    @(x) isnumeric(x) && isscalar(x));
 p.addParameter('TitleStr', 'Spasm / Active / Rest / Other / Stim analysis', @(x) ischar(x) || isstring(x));
 p.parse(varargin{:});
 opt = p.Results;
@@ -44,6 +45,7 @@ opt = p.Results;
 %% ================================================================
 %  1. EXTRACT SIGNALS
 %% ================================================================
+fprintf('[SPASM] Step 1: Extracting signals...\n');
 t      = seconds(TT_clean.tDur);
 TA_env = TT_clean.TA_env(:);
 MG_env = TT_clean.MG_env(:);
@@ -52,39 +54,52 @@ N      = numel(TA_env);
 
 is_act_TA = snrValue.is_act(:);
 is_act_MG = snrValue.is_act_MG(:);
+fprintf('[SPASM] Step 1 complete: %d samples loaded (%.1f sec)\n', N, t(end));
 
 %% ================================================================
 %  2. SPASM DETECTION
 %% ================================================================
+fprintf('[SPASM] Step 2: Computing spasm threshold...\n');
 thr_spasm_TA = prctile(TA_env(is_act_TA), opt.SpasmPrcTA);
 thr_spasm_MG = prctile(MG_env(is_act_MG), opt.SpasmPrcMG);
 
+fprintf('[SPASM] Step 2 complete: TA_thr=%.4f, MG_thr=%.4f\n', thr_spasm_TA, thr_spasm_MG);
 fprintf('Spasm threshold  ->  TA: %.4f  MG: %.4f\n', thr_spasm_TA, thr_spasm_MG);
 
+fprintf('[SPASM] Step 2b: Detecting raw spasm events...\n');
 is_spasm_raw = (TA_env >= thr_spasm_TA) | (MG_env >= thr_spasm_MG);
 
+fprintf('[SPASM] Step 2c: Filtering spasm events (min duration)...\n');
 min_spasm_samples = max(1, round(opt.SpasmMinDurS * fs));
 is_spasm = keep_long_runs(is_spasm_raw, min_spasm_samples);
+fprintf('[SPASM] Step 2d: Fusing nearby spasm events...\n');
 is_spasm = fuse_masks(is_spasm, fs, opt.FuseGapMs*10);
+fprintf('[SPASM] Step 2 complete: %d spasm samples detected\n', sum(is_spasm));
 
 %% ================================================================
 %  3. REST DETECTION
 %  Prefer masks produced by preprocess_and_label / snr_emg.
 %  If they are unavailable, fall back to complement of activity.
 %% ================================================================
+fprintf('[SPASM] Step 3: Detecting rest periods...\n');
 is_active_any = is_act_TA | is_act_MG;
 
 if isfield(snrValue, 'is_rest') && numel(snrValue.is_rest) == N
     is_rest = logical(snrValue.is_rest(:));
+    fprintf('[SPASM] Step 3: Using is_rest mask from snrValue\n');
 elseif isfield(snrValue, 'is_rest_TA') && isfield(snrValue, 'is_rest_MG') && ...
         numel(snrValue.is_rest_TA) == N && numel(snrValue.is_rest_MG) == N
     is_rest = logical(snrValue.is_rest_TA(:) & snrValue.is_rest_MG(:));
+    fprintf('[SPASM] Step 3: Using combined is_rest_TA & is_rest_MG masks\n');
 elseif isfield(snrValue, 'is_rest_MG') && numel(snrValue.is_rest_MG) == N
     is_rest = logical(snrValue.is_rest_MG(:));
+    fprintf('[SPASM] Step 3: Using is_rest_MG mask from snrValue\n');
 else
     warning('No compatible rest mask found in snrValue. Falling back to ~is_active_any.');
     is_rest = ~is_active_any;
+    fprintf('[SPASM] Step 3: Using fallback rest mask (complement of activity)\n');
 end
+fprintf('[SPASM] Step 3 complete: %d rest samples detected\n', sum(is_rest));
 
 %% ================================================================
 %  4. BUILD 4 MUTUALLY EXCLUSIVE STATES
@@ -94,6 +109,7 @@ end
 %    3) Active
 %    4) Other
 %% ================================================================
+fprintf('[SPASM] Step 4: Building mutually exclusive state masks...\n');
 % Rest should not include spasm
 is_rest = is_rest & ~is_spasm;
 
@@ -112,9 +128,13 @@ is_rest   = is_rest   & ~is_spasm  & ~is_active & ~is_other;
 is_active = is_active & ~is_spasm  & ~is_rest   & ~is_other;
 is_other  = ~(is_spasm | is_active | is_rest);
 
+fprintf('[SPASM] Step 4 complete: Spasm=%d, Active=%d, Rest=%d, Other=%d\n', ...
+    sum(is_spasm), sum(is_active), sum(is_rest), sum(is_other));
+
 %% ================================================================
 %  5. CH3 ON MASK
 %% ================================================================
+fprintf('[SPASM] Step 5: Computing Ch3 ON mask...\n');
 Ch3_finite = Ch3;
 Ch3_finite(~isfinite(Ch3)) = NaN;
 
@@ -139,15 +159,18 @@ is_ch3_on = keep_long_runs(is_ch3_on, min_ch3_samples);
 
 fprintf('Ch3 ON threshold: %.4f  |  ON samples: %d / %d (%.1f%%)\n', ...
     thr_ch3, sum(is_ch3_on), N, 100*sum(is_ch3_on)/N);
+fprintf('[SPASM] Step 5 complete: Ch3 threshold calculated\n');
 
 %% ================================================================
 %  6. AMPLITUDE STATISTICS PER CONTEXT × STIM STATE
 %% ================================================================
+fprintf('[SPASM] Step 6: Computing amplitude statistics per context...\n');
 contexts      = {'Spasm', 'Active', 'Rest', 'Other'};
 context_masks = {is_spasm, is_active, is_rest, is_other};
 stats = struct();
 
 for c = 1:4
+    fprintf('[SPASM] Step 6.%d: Computing %s statistics...\n', c, contexts{c});
     ctx  = contexts{c};
     mask = context_masks{c};
 
@@ -172,6 +195,7 @@ for c = 1:4
     s.median_MG_on  = median(amp_MG_on,  'omitnan');
     s.median_MG_off = median(amp_MG_off, 'omitnan');
 
+    fprintf('[SPASM] Step 6.%d: Computing per-event amplitudes for %s...\n', c, contexts{c});
     [ev_on_TA, ev_off_TA, ev_on_MG, ev_off_MG] = ...
         per_event_amplitudes(TA_env, MG_env, mask, is_ch3_on, fs);
 
@@ -180,6 +204,7 @@ for c = 1:4
     s.ev_on_MG  = ev_on_MG;
     s.ev_off_MG = ev_off_MG;
 
+    fprintf('[SPASM] Step 6.%d: Running Wilcoxon tests for %s...\n', c, contexts{c});
     valid_TA = isfinite(ev_on_TA) & isfinite(ev_off_TA);
     if sum(valid_TA) >= 2
         [s.p_TA, ~, sr_TA] = signrank(ev_on_TA(valid_TA), ev_off_TA(valid_TA));
@@ -207,18 +232,36 @@ for c = 1:4
     fprintf('  MG  median ON=%.4f  OFF=%.4f  p(signrank)=%.4g\n', ...
         s.median_MG_on, s.median_MG_off, s.p_MG);
 end
+fprintf('[SPASM] Step 6 complete: All statistics computed\n');
 
 %% ================================================================
 %  7. FIGURE
 %% ================================================================
 if opt.PlotResult
-    fig = figure('Color','k','Name', char(opt.TitleStr), ...
-        'Position', [50 50 1400 900]); %#ok<NASGU>
+    fprintf('[SPASM] Step 7: Creating visualization figure...\n');
+    
+    % Create figure with minimal graphics processing
+    fprintf('[SPASM] Step 7a: Creating figure...\n');
+    fig = figure('Color','w','Name', char(opt.TitleStr), ...
+        'Position', [50 50 1400 900], ...
+        'ToolBar', 'none', ...
+        'MenuBar', 'none', ...
+        'NumberTitle', 'off', ...
+        'Visible', 'off');  % Create invisible first, make visible after all plotting
+    
+    fprintf('[SPASM] Step 7a.1: Setting figure properties...\n');
+    % Note: Interactions property not available in all MATLAB versions
+    % Just use standard approach without interaction disabling
+    
+    fprintf('[SPASM] Step 7a.2: Creating top panel (annotated signal)...\n');
 
     %% --- Top panel: annotated signal ---
+    fprintf('[SPASM] Step 7a.3: Creating subplot...\n');
     ax_sig = subplot(3,3,[1 2 3]);
     hold(ax_sig,'on');
-    set(ax_sig,'Color','k','XColor','w','YColor','w','GridColor',[0.3 0.3 0.3]);
+    
+    fprintf('[SPASM] Step 7a.4: Configuring axis appearance...\n');
+    set(ax_sig,'Color','w','XColor','k','YColor','k','GridColor',[0.8 0.8 0.8]);
     grid(ax_sig,'on');
 
     spacing = max(range(TA_env), range(MG_env)) * 1.5;
@@ -230,75 +273,102 @@ if opt.PlotResult
     off_MG = spacing;
     lane   = 0.35 * spacing;
 
-    % Shade classified regions
-    shade_mask(ax_sig, t, is_spasm,  [off_TA-lane, off_TA+lane], [1 0.2 0.2], 0.35);
-    shade_mask(ax_sig, t, is_spasm,  [off_MG-lane, off_MG+lane], [1 0.2 0.2], 0.35);
-    shade_mask(ax_sig, t, is_active, [off_TA-lane, off_TA+lane], [0.2 1 0.4], 0.30);
-    shade_mask(ax_sig, t, is_active, [off_MG-lane, off_MG+lane], [0.2 1 0.4], 0.30);
-    shade_mask(ax_sig, t, is_rest,   [off_TA-lane, off_TA+lane], [1 0.85 0],  0.25);
-    shade_mask(ax_sig, t, is_rest,   [off_MG-lane, off_MG+lane], [1 0.85 0],  0.25);
-    shade_mask(ax_sig, t, is_other,  [off_TA-lane, off_TA+lane], [0.7 0.7 0.7], 0.20);
-    shade_mask(ax_sig, t, is_other,  [off_MG-lane, off_MG+lane], [0.7 0.7 0.7], 0.20);
+    % Downsample for faster visualization
+    fprintf('[SPASM] Step 7a.5: Downsampling masks for visualization (factor: %d)...\n', opt.PlotDownsample);
+    ds = opt.PlotDownsample;
+    idx_ds = 1:ds:numel(t);
+    t_ds = t(idx_ds);
+    is_spasm_ds  = is_spasm(idx_ds);
+    is_active_ds = is_active(idx_ds);
+    is_rest_ds   = is_rest(idx_ds);
+    is_other_ds  = is_other(idx_ds);
+    is_ch3_on_ds = is_ch3_on(idx_ds);
 
-    % Plot signals
-    plot(ax_sig, t, TA_env + off_TA, 'Color', [0.4 0.8 1], 'LineWidth', 0.8, ...
+    % Shade classified regions
+    fprintf('[SPASM] Step 7a.6: Shading spasm regions...\n');
+    shade_mask(ax_sig, t_ds, is_spasm_ds,  [off_TA-lane, off_TA+lane], [1 0.2 0.2], 0.35);
+    shade_mask(ax_sig, t_ds, is_spasm_ds,  [off_MG-lane, off_MG+lane], [1 0.2 0.2], 0.35);
+    
+    fprintf('[SPASM] Step 7a.7: Shading active regions...\n');
+    shade_mask(ax_sig, t_ds, is_active_ds, [off_TA-lane, off_TA+lane], [0.2 1 0.4], 0.30);
+    shade_mask(ax_sig, t_ds, is_active_ds, [off_MG-lane, off_MG+lane], [0.2 1 0.4], 0.30);
+    
+    fprintf('[SPASM] Step 7a.8: Shading rest regions...\n');
+    shade_mask(ax_sig, t_ds, is_rest_ds,   [off_TA-lane, off_TA+lane], [1 0.85 0],  0.25);
+    shade_mask(ax_sig, t_ds, is_rest_ds,   [off_MG-lane, off_MG+lane], [1 0.85 0],  0.25);
+    
+    fprintf('[SPASM] Step 7a.9: Shading other regions...\n');
+    shade_mask(ax_sig, t_ds, is_other_ds,  [off_TA-lane, off_TA+lane], [0.7 0.7 0.7], 0.20);
+    shade_mask(ax_sig, t_ds, is_other_ds,  [off_MG-lane, off_MG+lane], [0.7 0.7 0.7], 0.20);
+
+    % Plot signals (use downsampled for speed)
+    fprintf('[SPASM] Step 7a.10: Plotting signal traces (downsampled)...\n');
+    plot(ax_sig, t_ds, TA_env(idx_ds) + off_TA, 'Color', [0.4 0.8 1], 'LineWidth', 0.8, ...
         'DisplayName', 'TA env');
-    plot(ax_sig, t, MG_env + off_MG, 'Color', [0.8 0.5 1], 'LineWidth', 0.8, ...
+    plot(ax_sig, t_ds, MG_env(idx_ds) + off_MG, 'Color', [0.8 0.5 1], 'LineWidth', 0.8, ...
         'DisplayName', 'MG env');
 
-    % Ch3 ON overlay
-    shade_mask(ax_sig, t, is_ch3_on, [off_TA+lane*0.7, off_TA+lane], [0 1 1], 0.6);
-    shade_mask(ax_sig, t, is_ch3_on, [off_MG+lane*0.7, off_MG+lane], [0 1 1], 0.6);
+    % Ch3 ON overlay (use downsampled)
+    fprintf('[SPASM] Step 7a.11: Shading Ch3 ON regions...\n');
+    shade_mask(ax_sig, t_ds, is_ch3_on_ds, [off_TA+lane*0.7, off_TA+lane], [0 1 1], 0.6);
+    shade_mask(ax_sig, t_ds, is_ch3_on_ds, [off_MG+lane*0.7, off_MG+lane], [0 1 1], 0.6);
 
-    % Threshold lines hidden from legend
-    yline(ax_sig, thr_spasm_TA + off_TA, '--', 'Color', [1 0.2 0.2], ...
-        'LineWidth', 1, 'Label', 'Spasm thr TA', ...
-        'LabelHorizontalAlignment', 'left', ...
-        'HandleVisibility', 'off');
-    yline(ax_sig, thr_spasm_MG + off_MG, '--', 'Color', [1 0.2 0.2], ...
-        'LineWidth', 1, 'Label', 'Spasm thr MG', ...
-        'LabelHorizontalAlignment', 'left', ...
-        'HandleVisibility', 'off');
+    % Threshold lines hidden from legend - SKIP yline as it causes issues on macOS
+    fprintf('[SPASM] Step 7a.12: Skipping yline (macOS compatibility)...\n');
 
     % Legend proxies only
+    fprintf('[SPASM] Step 7a.13: Creating legend patches...\n');
     patch(ax_sig, NaN, NaN, [1 0.2 0.2], 'FaceAlpha', 0.35, 'EdgeColor','none', 'DisplayName','Spasm');
     patch(ax_sig, NaN, NaN, [0.2 1 0.4], 'FaceAlpha', 0.30, 'EdgeColor','none', 'DisplayName','Active');
     patch(ax_sig, NaN, NaN, [1 0.85 0],  'FaceAlpha', 0.25, 'EdgeColor','none', 'DisplayName','Rest');
     patch(ax_sig, NaN, NaN, [0.7 0.7 0.7], 'FaceAlpha', 0.20, 'EdgeColor','none', 'DisplayName','Other');
     patch(ax_sig, NaN, NaN, [0 1 1],     'FaceAlpha', 0.60, 'EdgeColor','none', 'DisplayName','Ch3 ON');
 
+    fprintf('[SPASM] Step 7a.16: Setting axis labels and ticks...\n');
     yticks(ax_sig, [off_TA, off_MG]);
     yticklabels(ax_sig, {'TA env', 'MG env'});
-    xlabel(ax_sig, 'Time (s)', 'Color','w');
-    title(ax_sig, char(opt.TitleStr), 'Color','w');
-    legend(ax_sig, 'TextColor','w', 'Color','k', 'Location','northeast', 'FontSize',7, ...
-        'AutoUpdate', 'off');
+    xlabel(ax_sig, 'Time (s)', 'Color','k');
+    title(ax_sig, char(opt.TitleStr), 'Color','k');
+    
+    fprintf('[SPASM] Step 7a.15: Creating legend (with error handling)...\n');
+    % Create legend but handle version compatibility
+    try
+        leg = legend(ax_sig, 'TextColor','k', 'Color','w', 'Location','northeast', 'FontSize',7, ...
+            'AutoUpdate', 'off');
+    catch
+        fprintf('[SPASM] Warning: Legend creation failed, continuing without legend\n');
+    end
+    fprintf('[SPASM] Step 7a complete: Top panel finished successfully\n');
+    fprintf('[SPASM] Step 7b: Creating bar plot subpanels...\n');
 
     %% --- Bottom panels: bar plots ON vs OFF per context ---
     ctx_colors = {[1 0.2 0.2], [0.2 1 0.4], [1 0.85 0], [0.7 0.7 0.7]};
+    gray_color = [0.4 0.4 0.4];
 
     for c = 1:4
+        fprintf('[SPASM] Step 7b.%d: Plotting %s context bars...\n', c, contexts{c});
         ctx = contexts{c};
         s   = stats.(ctx);
         col = ctx_colors{c};
 
         % TA panel
+        fprintf('[SPASM] Step 7b.%d.1: Creating TA subplot...\n', c);
         ax = subplot(3,4,4+c);
         hold(ax,'on');
-        set(ax,'Color','k','XColor','w','YColor','w','GridColor',[0.3 0.3 0.3]);
+        set(ax,'Color','w','XColor','k','YColor','k','GridColor',[0.8 0.8 0.8]);
         grid(ax,'on');
 
         vals = [s.median_TA_off, s.median_TA_on];
         xbar = [1 2];
-        b = bar(ax, xbar, vals, 0.6, 'FaceColor','flat', 'HandleVisibility','off');
-        b.CData(1,:) = [0.4 0.4 0.4];
-        b.CData(2,:) = col;
+        % Create bars with explicit colors to avoid CData modification issues
+        bar(ax, xbar(1), vals(1), 0.6, 'FaceColor', gray_color, 'HandleVisibility','off');
+        bar(ax, xbar(2), vals(2), 0.6, 'FaceColor', col, 'HandleVisibility','off');
 
         set(ax, 'XTick', xbar, 'XTickLabel', {'Ch3 OFF','Ch3 ON'}, ...
-            'XColor','w', 'YColor','w');
+            'XColor','k', 'YColor','k');
         xlim(ax, [0.5 2.5]);
-        ylabel(ax,'TA amplitude','Color','w');
-        title(ax, sprintf('TA | %s\np=%.3g', ctx, s.p_TA), 'Color','w');
+        ylabel(ax,'TA amplitude','Color','k');
+        title(ax, sprintf('TA | %s\np=%.3g', ctx, s.p_TA), 'Color','k');
 
         ymax = max(vals);
         if ~isfinite(ymax) || ymax <= 0
@@ -307,22 +377,23 @@ if opt.PlotResult
         ylim(ax, [0, ymax*1.3]);
 
         % MG panel
+        fprintf('[SPASM] Step 7b.%d.2: Creating MG subplot...\n', c);
         ax = subplot(3,4,8+c);
         hold(ax,'on');
-        set(ax,'Color','k','XColor','w','YColor','w','GridColor',[0.3 0.3 0.3]);
+        set(ax,'Color','w','XColor','k','YColor','k','GridColor',[0.8 0.8 0.8]);
         grid(ax,'on');
 
         vals = [s.median_MG_off, s.median_MG_on];
         xbar = [1 2];
-        b = bar(ax, xbar, vals, 0.6, 'FaceColor','flat', 'HandleVisibility','off');
-        b.CData(1,:) = [0.4 0.4 0.4];
-        b.CData(2,:) = col;
+        % Create bars with explicit colors to avoid CData modification issues
+        bar(ax, xbar(1), vals(1), 0.6, 'FaceColor', gray_color, 'HandleVisibility','off');
+        bar(ax, xbar(2), vals(2), 0.6, 'FaceColor', col, 'HandleVisibility','off');
 
         set(ax, 'XTick', xbar, 'XTickLabel', {'Ch3 OFF','Ch3 ON'}, ...
-            'XColor','w', 'YColor','w');
+            'XColor','k', 'YColor','k');
         xlim(ax, [0.5 2.5]);
-        ylabel(ax,'MG amplitude','Color','w');
-        title(ax, sprintf('MG | %s\np=%.3g', ctx, s.p_MG), 'Color','w');
+        ylabel(ax,'MG amplitude','Color','k');
+        title(ax, sprintf('MG | %s\np=%.3g', ctx, s.p_MG), 'Color','k');
 
         ymax = max(vals);
         if ~isfinite(ymax) || ymax <= 0
@@ -332,11 +403,20 @@ if opt.PlotResult
 
         legend(ax, 'off');
     end
+    fprintf('[SPASM] Step 7c: Making figure visible...\n');
+    try
+        set(fig, 'Visible', 'on');
+        drawnow limitrate;  % Minimal rendering
+    catch
+        fprintf('[SPASM] Warning: Could not set figure visible\n');
+    end
+    fprintf('[SPASM] Step 7 complete: Figure visualization finished\n');
 end
 
 %% ================================================================
 %  8. OUTPUT
 %% ================================================================
+fprintf('[SPASM] Step 8: Preparing output structure...\n');
 out.is_spasm      = is_spasm;
 out.is_active     = is_active;
 out.is_rest       = is_rest;
@@ -347,6 +427,9 @@ out.thr_spasm_MG  = thr_spasm_MG;
 out.thr_ch3       = thr_ch3;
 out.stats         = stats;
 out.t             = t;
+
+fprintf('[SPASM] ========== ANALYSIS COMPLETE ==========\n');
+fprintf('[SPASM] Total execution complete. Output ready.\n');
 
 end
 
@@ -402,16 +485,22 @@ if ~any(mask)
     return;
 end
 
+fprintf('[SHADE] Computing transitions in mask (size: %d)...\n', numel(mask));
 d = diff([false; mask(:); false]);
 starts = find(d ==  1);
 ends   = find(d == -1) - 1;
+fprintf('[SHADE] Found %d regions to shade\n', numel(starts));
 
 for k = 1:numel(starts)
+    if mod(k, max(1, round(numel(starts)/10))) == 0
+        fprintf('[SHADE] Drawing region %d / %d...\n', k, numel(starts));
+    end
     x0 = t(starts(k));
     x1 = t(ends(k));
     patch(ax, [x0 x1 x1 x0], [ylims(1) ylims(1) ylims(2) ylims(2)], ...
         color, 'FaceAlpha', alpha, 'EdgeColor', 'none', ...
         'HandleVisibility', 'off');
 end
+fprintf('[SHADE] Completed shading\n');
 end
 

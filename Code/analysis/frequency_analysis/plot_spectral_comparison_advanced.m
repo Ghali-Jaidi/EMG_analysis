@@ -4,13 +4,15 @@ function plot_spectral_comparison_advanced(varargin)
 % Modified to compute per-epoch PSDs for individual burst visualization
 %
 % Usage:
-%   plot_spectral_comparison_advanced()           % Interactive, loads from hardcoded paths
-%   plot_spectral_comparison_advanced(TT)         % Uses preprocessed TT data
-%   plot_spectral_comparison_advanced(TT, label)  % With condition label
+%   plot_spectral_comparison_advanced()                      % Interactive, loads from hardcoded paths
+%   plot_spectral_comparison_advanced(TT)                    % Uses preprocessed TT data
+%   plot_spectral_comparison_advanced(TT, label)             % With condition label
+%   plot_spectral_comparison_advanced(TT, label, snrValue)   % With activity mask from preprocessing
 
 % Parse optional input arguments
 use_input_data = false;
 TT_input = [];
+snr_input = [];
 condition_label = 'Recording';
 
 if nargin > 0 && istimetable(varargin{1})
@@ -21,6 +23,11 @@ end
 
 if nargin > 1 && ischar(varargin{2})
     condition_label = varargin{2};
+end
+
+if nargin > 2 && isstruct(varargin{3})
+    snr_input = varargin{3};
+    fprintf('  Using provided activity masks from preprocessing\n');
 end
 
 fs = 10000;
@@ -37,13 +44,27 @@ if use_input_data
     ta_raw = TT_input.TA_raw;
     mg_raw = TT_input.MG_raw;
     
-    % Try to get activity mask, otherwise use all data
-    if ismember('TA_env', TT_input.Properties.VariableNames)
-        % Use activity detection
+    % Try to get activity mask from different sources
+    activity_mask = [];
+    
+    % Try 1: Use provided snrValue struct (has priority)
+    if ~isempty(snr_input) && isstruct(snr_input) && isfield(snr_input, 'is_act')
+        activity_mask = snr_input.is_act > 0;
+        fprintf('  ✓ Using preprocessed activity mask (%.1f%% active)\n', ...
+            100 * sum(activity_mask) / numel(activity_mask));
+    % Try 2: Use activity mask column in TT if present
+    elseif ismember('is_act', TT_input.Properties.VariableNames)
+        activity_mask = TT_input.is_act > 0;
+    % Try 3: Use envelope-based detection
+    elseif ismember('TA_env', TT_input.Properties.VariableNames)
         activity_mask = TT_input.TA_env > 0.1 * max(TT_input.TA_env);
+    % Try 4: Use filtered signal-based detection
+    elseif ismember('TA_filt', TT_input.Properties.VariableNames)
+        activity_mask = abs(TT_input.TA_filt) > 0.1 * max(abs(TT_input.TA_filt));
     else
-        % Use all data
+        % Fall back to using all data
         activity_mask = true(height(TT_input), 1);
+        fprintf('  ⚠ Warning: No activity mask found, using all data as active\n');
     end
     
     % Extract epochs
@@ -57,24 +78,38 @@ if use_input_data
         diffs = diff(active_idx);
         breaks = find(diffs > 1);
         
-        start_idx = 1;
-        for break_idx = 1:length(breaks)
-            end_idx = breaks(break_idx);
-            segment_indices = active_idx(start_idx:end_idx);
+        if ~isempty(breaks)
+            start_idx = 1;
+            for break_idx = 1:length(breaks)
+                end_idx = breaks(break_idx);
+                segment_indices = active_idx(start_idx:end_idx);
+                
+                if length(segment_indices) >= min_epoch_length
+                    epochs_ta{end+1} = ta_raw(segment_indices);
+                    epochs_mg{end+1} = mg_raw(segment_indices);
+                end
+                
+                start_idx = end_idx + 1;
+            end
             
+            % Last segment
+            segment_indices = active_idx(start_idx:end);
             if length(segment_indices) >= min_epoch_length
                 epochs_ta{end+1} = ta_raw(segment_indices);
                 epochs_mg{end+1} = mg_raw(segment_indices);
             end
-            
-            start_idx = end_idx + 1;
+        else
+            % No breaks, entire active region is one epoch
+            if length(active_idx) >= min_epoch_length
+                epochs_ta{end+1} = ta_raw(active_idx);
+                epochs_mg{end+1} = mg_raw(active_idx);
+            end
         end
-        
-        % Last segment
-        segment_indices = active_idx(start_idx:end);
-        if length(segment_indices) >= min_epoch_length
-            epochs_ta{end+1} = ta_raw(segment_indices);
-            epochs_mg{end+1} = mg_raw(segment_indices);
+    else
+        fprintf('  Warning: No active samples found, using entire signal\n');
+        if numel(ta_raw) >= min_epoch_length
+            epochs_ta{end+1} = ta_raw;
+            epochs_mg{end+1} = mg_raw;
         end
     end
     
@@ -219,6 +254,18 @@ fprintf('  ✓ Gait TA: %d valid PSDs\n', size(psd_gait_TA_epochs, 1));
 fprintf('  ✓ Gait MG: %d valid PSDs\n', size(psd_gait_MG_epochs, 1));
 fprintf('  ✓ Spasm TA: %d valid PSDs\n', size(psd_spasm_TA_epochs, 1));
 fprintf('  ✓ Spasm MG: %d valid PSDs\n\n', size(psd_spasm_MG_epochs, 1));
+
+% Check if any valid PSDs were computed
+if isempty(psd_gait_TA_epochs) || isempty(psd_spasm_TA_epochs)
+    fprintf('\n❌ ERROR: No valid PSDs extracted from epochs.\n');
+    fprintf('This typically means:\n');
+    fprintf('  1. Epochs are too short (< 50ms)\n');
+    fprintf('  2. Activity masks are incorrect\n');
+    fprintf('  3. Signal quality is too low\n\n');
+    fprintf('Gait TA epochs: %d | Spasm TA epochs: %d\n', ...
+        numel(epochs_gait_TA), numel(spasm_TA_segs));
+    return;
+end
 
 % Mean PSDs across epochs
 mean_psd_gait_TA  = mean(psd_gait_TA_epochs, 1);

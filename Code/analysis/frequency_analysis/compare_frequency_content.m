@@ -76,7 +76,8 @@ for file_idx = 1:numel(gait_files)
     
     fprintf('[%d/%d] Loading: %s\n', file_idx, numel(gait_files), f_gait);
     
-    % Load gait data
+    % Load gait data - preprocess to get proper TT structure
+    % but skip filtering and rectification for frequency analysis
     [~, srcName_gait, ~] = fileparts(f_gait);
     paramFile_gait = fullfile(path, [srcName_gait, '_param.mat']);
     if isfile(paramFile_gait)
@@ -86,25 +87,123 @@ for file_idx = 1:numel(gait_files)
         P = default_emg_parameters();
     end
     
-    [TT_gait, snr_gait, ~] = preprocess_and_label(P, fs, ...
-        'fullFile', fullFile_gait, ...
-        'plot_figures', false, ...
-        'save_figures', false);
+    % Call preprocess but without filtering/rectification
+    % by using minimal processing options
+    try
+        [TT_gait, snr_gait, ~] = preprocess_and_label(P, fs, ...
+            'fullFile', fullFile_gait, ...
+            'plot_figures', false, ...
+            'save_figures', false, ...
+            'skip_filter', true, ...
+            'skip_rectify', true);
+    catch
+        % If the skip options don't exist, try alternative approach
+        % Load the file and create minimal TT structure
+        fprintf('  Creating minimal TT structure (no filters/rectification)...\n');
+        data = load(fullFile_gait);
+        
+        % Try to find signal columns - multiple formats supported
+        TA_raw = [];
+        MG_raw = [];
+        
+        % Format 1: Standard format with data__chan_X_rec_Y fields
+        fieldnames_data = fieldnames(data);
+        rec_fields = fieldnames_data(~cellfun(@isempty, regexp(fieldnames_data, 'data__chan_\d_rec_\d', 'match')));
+        
+        if ~isempty(rec_fields)
+            % Found standard format - ask user to select recording
+            % Extract recording numbers
+            rec_nums = [];
+            expr = '^data__chan_1_rec_(\d+)$';
+            for i = 1:numel(rec_fields)
+                tok = regexp(rec_fields{i}, expr, 'tokens');
+                if ~isempty(tok)
+                    rec_nums(end+1) = str2double(tok{1}{1}); %#ok<AGROW>
+                end
+            end
+            rec_nums = unique(rec_nums);
+            
+            if ~isempty(rec_nums)
+                % Ask user which recording to use
+                if numel(rec_nums) == 1
+                    selected_rec = rec_nums(1);
+                    fprintf('  Using recording %d\n', selected_rec);
+                else
+                    recLabels = arrayfun(@(r) sprintf('Recording %d', r), rec_nums, 'UniformOutput', false);
+                    [idx, ok] = listdlg('PromptString', sprintf('Select recording from %s:', f_gait), ...
+                                        'SelectionMode', 'single', ...
+                                        'ListString', recLabels);
+                    if ~ok, error('Recording selection cancelled.'); end
+                    selected_rec = rec_nums(idx);
+                end
+                
+                % Extract selected recording
+                v1 = sprintf('data__chan_1_rec_%d', selected_rec);
+                v2 = sprintf('data__chan_2_rec_%d', selected_rec);
+                TA_raw = data.(v1)(:);
+                MG_raw = data.(v2)(:);
+            end
+        end
+        
+        % Format 2: Direct 'data' field with columns
+        if isempty(TA_raw) && isfield(data, 'data')
+            raw_data = data.data;
+            if size(raw_data, 2) >= 2
+                TA_raw = raw_data(:, 1);
+                MG_raw = raw_data(:, 2);
+            end
+        end
+        
+        % Format 3: data_matrix field
+        if isempty(TA_raw) && isfield(data, 'data_matrix')
+            raw_data = data.data_matrix;
+            if size(raw_data, 2) >= 2
+                TA_raw = raw_data(:, 1);
+                MG_raw = raw_data(:, 2);
+            end
+        end
+        
+        % Format 4: Individual channel variables (TA_V, MG_V)
+        if isempty(TA_raw) && isfield(data, 'TA_V')
+            TA_raw = data.TA_V(:);
+            if isfield(data, 'MG_V')
+                MG_raw = data.MG_V(:);
+            end
+        end
+        
+        % Check if we found the data
+        if isempty(TA_raw) || isempty(MG_raw)
+            error('Cannot identify signal columns in file. Available fields: %s', ...
+                sprintf('%s ', fieldnames_data{:}));
+        end
+        
+        % Create minimal TT structure for frequency analysis
+        N_gait = numel(TA_raw);
+        time_vector = (0:N_gait-1)' / fs;
+        
+        TT_gait = timetable(seconds(time_vector), TA_raw, MG_raw, ...
+            'VariableNames', {'TA_raw', 'MG_raw'});
+        
+        % Create activity mask (use all data as active)
+        snr_gait.is_act = true(N_gait, 1);
+        snr_gait.is_act_MG = true(N_gait, 1);
+        fprintf('  Warning: Using all samples as active (no SNR analysis)\n');
+    end
     
     % Get recording duration
-    N_gait = numel(TT_gait.TA_rect);
+    N_gait = numel(TT_gait.TA_raw);
     duration_gait = N_gait / fs;
     
     fprintf('  Duration: %.2f seconds\n', duration_gait);
     
-    % Extract ALL active samples for TA and MG
+    % Extract ALL active samples for TA and MG using RAW signals
     % TA: extract all samples where is_act = 1
     TA_active_mask = snr_gait.is_act == 1;
-    TA_active = TT_gait.TA_rect(TA_active_mask);
+    TA_active = TT_gait.TA_raw(TA_active_mask);
     
     % MG: extract all samples where is_act_MG = 1
     MG_active_mask = snr_gait.is_act_MG == 1;
-    MG_active = TT_gait.MG_rect(MG_active_mask);
+    MG_active = TT_gait.MG_raw(MG_active_mask);
     
     % Calculate active percentages
     pct_TA = 100 * sum(TA_active_mask) / N_gait;
@@ -141,23 +240,116 @@ fprintf('\n========================================\n');
 fprintf('Loading SPASM recording: %s\n', f_spasm);
 fprintf('========================================\n');
 
-% Load spasm data
+% Load spasm data - preprocess to get proper TT structure
+% but skip filtering and rectification for frequency analysis
 [~, srcName_spasm, ~] = fileparts(f_spasm);
 paramFile_spasm = fullfile(p_spasm, [srcName_spasm, '_param.mat']);
 if isfile(paramFile_spasm)
     tmp = load(paramFile_spasm, 'P');
-    P = tmp.P;
+    P_spasm = tmp.P;
 else
-    P = default_emg_parameters();
+    P_spasm = default_emg_parameters();
 end
 
-[TT_spasm, ~, ~] = preprocess_and_label(P, fs, ...
-    'fullFile', fullFile_spasm, ...
-    'plot_figures', false, ...
-    'save_figures', false);
+% Call preprocess but without filtering/rectification
+try
+    [TT_spasm, ~, ~] = preprocess_and_label(P_spasm, fs, ...
+        'fullFile', fullFile_spasm, ...
+        'plot_figures', false, ...
+        'save_figures', false, ...
+        'skip_filter', true, ...
+        'skip_rectify', true);
+catch
+    % If the skip options don't exist, try alternative approach
+    % Load the file and create minimal TT structure
+    fprintf('  Creating minimal TT structure (no filters/rectification)...\n');
+    data = load(fullFile_spasm);
+    
+    % Try to find signal columns - multiple formats supported
+    TA_raw = [];
+    MG_raw = [];
+    
+    % Format 1: Standard format with data__chan_X_rec_Y fields
+    fieldnames_data = fieldnames(data);
+    rec_fields = fieldnames_data(~cellfun(@isempty, regexp(fieldnames_data, 'data__chan_\d_rec_\d', 'match')));
+    
+    if ~isempty(rec_fields)
+        % Found standard format - ask user to select recording
+        % Extract recording numbers
+        rec_nums = [];
+        expr = '^data__chan_1_rec_(\d+)$';
+        for i = 1:numel(rec_fields)
+            tok = regexp(rec_fields{i}, expr, 'tokens');
+            if ~isempty(tok)
+                rec_nums(end+1) = str2double(tok{1}{1}); %#ok<AGROW>
+            end
+        end
+        rec_nums = unique(rec_nums);
+        
+        if ~isempty(rec_nums)
+            % Ask user which recording to use
+            if numel(rec_nums) == 1
+                selected_rec = rec_nums(1);
+                fprintf('  Using recording %d\n', selected_rec);
+            else
+                recLabels = arrayfun(@(r) sprintf('Recording %d', r), rec_nums, 'UniformOutput', false);
+                [idx, ok] = listdlg('PromptString', sprintf('Select recording from %s:', f_spasm), ...
+                                    'SelectionMode', 'single', ...
+                                    'ListString', recLabels);
+                if ~ok, error('Recording selection cancelled.'); end
+                selected_rec = rec_nums(idx);
+            end
+            
+            % Extract selected recording
+            v1 = sprintf('data__chan_1_rec_%d', selected_rec);
+            v2 = sprintf('data__chan_2_rec_%d', selected_rec);
+            TA_raw = data.(v1)(:);
+            MG_raw = data.(v2)(:);
+        end
+    end
+    
+    % Format 2: Direct 'data' field with columns
+    if isempty(TA_raw) && isfield(data, 'data')
+        raw_data = data.data;
+        if size(raw_data, 2) >= 2
+            TA_raw = raw_data(:, 1);
+            MG_raw = raw_data(:, 2);
+        end
+    end
+    
+    % Format 3: data_matrix field
+    if isempty(TA_raw) && isfield(data, 'data_matrix')
+        raw_data = data.data_matrix;
+        if size(raw_data, 2) >= 2
+            TA_raw = raw_data(:, 1);
+            MG_raw = raw_data(:, 2);
+        end
+    end
+    
+    % Format 4: Individual channel variables (TA_V, MG_V)
+    if isempty(TA_raw) && isfield(data, 'TA_V')
+        TA_raw = data.TA_V(:);
+        if isfield(data, 'MG_V')
+            MG_raw = data.MG_V(:);
+        end
+    end
+    
+    % Check if we found the data
+    if isempty(TA_raw) || isempty(MG_raw)
+        error('Cannot identify signal columns in file. Available fields: %s', ...
+            sprintf('%s ', fieldnames_data{:}));
+    end
+    
+    % Create minimal TT structure for frequency analysis
+    N_spasm = numel(TA_raw);
+    time_vector = (0:N_spasm-1)' / fs;
+    
+    TT_spasm = timetable(seconds(time_vector), TA_raw, MG_raw, ...
+        'VariableNames', {'TA_raw', 'MG_raw'});
+end
 
 % Get recording duration
-N_spasm = numel(TT_spasm.TA_rect);
+N_spasm = numel(TT_spasm.TA_raw);
 duration_spasm = N_spasm / fs;
 
 fprintf('Spasm recording duration: %.2f seconds\n', duration_spasm);
@@ -179,8 +371,8 @@ fprintf('  ✓ MG active samples: %d (%.2f sec)\n\n', numel(gait_MG_all), numel(
 % For SPASM: Extract entire specified intervals (no activity filtering)
 fprintf('SPASM segments (user-selected intervals):\n');
 
-spasm_TA_segments = extract_segments(TT_spasm.TA_rect, fs, spasm_intervals);
-spasm_MG_segments = extract_segments(TT_spasm.MG_rect, fs, spasm_intervals);
+spasm_TA_segments = extract_segments(TT_spasm.TA_raw, fs, spasm_intervals);
+spasm_MG_segments = extract_segments(TT_spasm.MG_raw, fs, spasm_intervals);
 
 % Concatenate spasm segments
 if isempty(spasm_TA_segments)
@@ -244,7 +436,7 @@ ylabel('Power');
 title('TA (Tibialis Anterior) - Frequency Content');
 legend('Location', 'best');
 grid on;
-xlim([0 500]);
+xlim([0 1000]);
 hold off;
 
 % MG Comparison
@@ -257,7 +449,7 @@ ylabel('Power');
 title('MG (Medial Gastrocnemius) - Frequency Content');
 legend('Location', 'best');
 grid on;
-xlim([0 500]);
+xlim([0 1000]);
 hold off;
 
 % TA Log Scale
@@ -271,7 +463,7 @@ title('TA - Frequency Content (log scale)');
 legend('Location', 'best');
 grid on;
 set(gca, 'YScale', 'log');  % Ensure log scale is applied
-xlim([0 500]);
+xlim([0 1000]);
 hold off;
 
 % MG Log Scale
@@ -285,7 +477,7 @@ title('MG - Frequency Content (log scale)');
 legend('Location', 'best');
 grid on;
 set(gca, 'YScale', 'log');  % Ensure log scale is applied
-xlim([0 500]);
+xlim([0 1000]);
 hold off;
 
 %% ---- Summary Statistics ----

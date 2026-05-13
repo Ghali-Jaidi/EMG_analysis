@@ -1,259 +1,371 @@
 # EMG Analysis Pipeline
 
-A comprehensive MATLAB pipeline for analyzing electromyography (EMG) signals from injured and uninjured subjects, with support for detecting spasms, gait, and stimulus-induced patterns in two muscle channels (TA: tibialis anterior, MG: medial gastrocnemius).
+Welcome to the **EMG Analysis Pipeline**—a comprehensive MATLAB framework for processing and analyzing electromyography (EMG) signals. This project is designed to help researchers study muscle activity patterns, detect spastic events, and compare responses across different conditions and subject groups.
 
-## Overview
+## What Can You Do With This?
 
-This project processes raw EMG recordings to:
-- **Preprocess & label** raw signals (filtering, artifact removal, activity detection)
-- **Extract features** (amplitude, duration, correlation between channels)
-- **Detect spasms** and classify them by stimulus state (stimulated vs. unstimulated)
-- **Compare groups** (injured vs. uninjured) and conditions (stim ON vs. OFF)
+This pipeline enables you to:
 
----
+- 🔬 **Preprocess raw EMG data** – Load recordings, remove noise, and extract clean muscle signals
+- 📊 **Detect muscle activity** – Automatically identify active vs. quiet periods using intelligent activity masks
+- 🎯 **Detect spasms** – Find involuntary muscle contractions using adaptive thresholds
+- ⚡ **Analyze stimulus effects** – Compare muscle responses with and without stimulation
+- 📈 **Extract features** – Compute amplitude, duration, frequency content, and cross-channel correlation
+- 👥 **Compare groups** – Statistically compare injured vs. uninjured subjects or different conditions
+- 📉 **Visualize results** – Generate publication-ready plots and interactive visualizations
 
-## Core Pipeline
+## Quick Start
 
-### 1. **Preprocessing & Labeling** (`preprocess_and_label.m`)
-**Purpose**: Convert raw 3-channel EMG data into clean, labeled signals with activity masks.
+New to this project? Start here:
 
-**Input**: Raw MAT file with fields `data__chan_1_rec_X`, `data__chan_2_rec_X`, `data__chan_3_rec_X` (X = recording ID)
+1. **Open MATLAB** and navigate to the `Code/` folder
+2. **Type:** `main`
+3. **Follow the interactive menu** to select your analysis
 
-**Process**:
-- Load & time-align three channels (TA, MG, Ch3/stimulus trigger)
-- Robust scaling (median-based normalization)
-- Apply bandpass (50–500 Hz) and notch filters (50 Hz)
-- Compute rectified envelope
-- Detect "quiet" (rest) periods using percentile thresholds
-- Detect "active" periods using SNR-based methodology
-- Merge nearby intervals and filter by duration
+That's it! The menu guides you through file selection, preprocessing, and analysis. For more details, see `QUICKSTART.md`.
 
-**Output**: 
-- `TT_clean`: timetable with scaled signals, filtered signals, envelope, masks
-- `snrValue`: struct with activity masks (`is_act`, `is_act_MG`, `is_rest`, `is_rest_TA`, `is_rest_MG`)
-- `meta`: recording metadata (recID, file path)
-- `preview`: diagnostic plot (optional)
+## Project Organization
 
-**Key Parameters** (in `default_emg_parameters.m`):
-- `envWindowMs`: envelope window duration (default 3 ms)
-- `thresholds`: percentiles for quiet detection (default [40 50])
-- `act_prc`: TA activity percentile threshold (default 70)
-- `act_prc_MG`: MG activity percentile threshold (default 50)
-- `snr_win_ms`: SNR computation window (default 20 ms)
+The code is organized into logical modules for easy navigation:
 
----
+```
+Code/
+├── main.m                    ← START HERE! (Interactive menu)
+├── core/                     (Signal preprocessing)
+├── filters/                  (Filtering utilities)
+├── utilities/                (Helper functions)
+├── analysis/                 (High-level analysis workflows)
+│   ├── spasm_detection/
+│   ├── frequency_analysis/
+│   └── feature_extraction/
+├── plotting/                 (Visualization & figures)
+├── tests/                    (Validation & synthetic data)
+├── data/                     (Sample data)
+└── config/                   (Configuration & GUI)
+```
 
-### 2. **Feature Extraction** (`Feature_Extraction.m`)
-**Purpose**: Master analysis script that orchestrates multi-file comparisons and generates summary statistics.
-
-**Workflow**:
-1. Prompts user to select between:
-   - Injured vs. Uninjured comparison
-   - Stimulus ON vs. OFF comparison
-2. Loops over selected recordings, calling `preprocess_and_label` on each
-3. Computes per-recording metrics:
-   - **SNR-based**: Signal-to-noise ratio for each channel
-   - **PNR**: Peak-to-noise ratio (peak activity vs. rest baseline)
-   - **Duration**: Mean spasm duration and active/rest bout lengths
-   - **Overlap**: Cross-channel correlation (TA–MG overlap during activity)
-4. Groups results by condition (injured/uninjured) and generates comparison plots
-5. Saves summary figures
-
-**Output**: Structured results with per-file statistics and group comparisons.
+**See `ARCHITECTURE.md`** for a detailed dependency diagram and data flow explanation.
 
 ---
 
-### 3. **Spasm Detection** (`spasm_gait_stim_analysis.m`)
-**Purpose**: Classify activity into four mutually exclusive states and analyze stimulus effects.
+## Core Analysis Workflows
 
-**States** (priority order):
-1. **Spasm**: High-amplitude envelope (percentile-based threshold)
-2. **Rest**: Low activity (from SNR masks)
-3. **Active**: Intermediate activity
-4. **Other**: Everything else (artifacts, noise)
+### 1️⃣ Preprocessing
+**Start here:** Convert your raw EMG recordings into clean, labeled signals ready for analysis.
 
-**Process**:
-- Define spasm threshold as percentile of active samples (default 65th)
-- Filter spasms by minimum duration and fuse nearby events
-- Detect Ch3 (stimulus) ON periods and classify each spasm as:
-  - **Stimulated**: overlaps any Ch3 ON sample
-  - **Unstimulated**: no overlap
-- Compute amplitude (envelope percentile) for each spasm in stim/unstim groups
-- Perform Wilcoxon rank-sum test (unpaired)
+- **Input:** CSV files from LabChart or MAT files with raw EMG data
+- **Output:** `TT` structure with multiple signal representations (raw, filtered, rectified, envelope)
+- **What it does:**
+  - Loads and aligns multi-channel recordings
+  - Applies filtering (bandpass, notch) and removes artifacts
+  - Detects activity periods using SNR-based masks
+  - Computes smoothed envelopes for event detection
+- **See:** `core/README.md`
 
-**Output**: 
-- Masks for each state and stimulus condition
-- Amplitude distributions
-- Statistical test results (p-value, median, n)
-- Annotated figure with shaded regions
+### 2️⃣ Spasm Detection
+**Find involuntary muscle contractions** using envelope-based analysis.
 
-**Key Parameters**:
-- `SpasmPrcTA`, `SpasmPrcMG`: Percentile thresholds (default 65)
-- `SpasmMinDurS`: Minimum spasm duration in seconds (default 0.1 s)
-- `FuseGapMs`: Gap to fuse nearby spasms (default 50 ms)
-- `Ch3MinOnMs`: Minimum stimulus ON duration (default 100 ms)
+- **Input:** Preprocessed TT structure
+- **Output:** Spasm event masks, statistics (rate, duration, amplitude)
+- **What it does:**
+  - Computes adaptive thresholds (percentile-based)
+  - Detects high-amplitude bursts in muscle activity
+  - Classifies spasms as stimulus-evoked or spontaneous
+  - Generates statistical comparisons
+- **See:** `analysis/spasm_detection/README.md`
 
----
+### 3️⃣ Frequency Analysis
+**Analyze spectral properties** of EMG signals.
 
-### 4. **Stimulus vs. No-Stimulus Comparison** (`compare_spasm_stim_vs_nostim.m`)
-**Purpose**: Compare amplitude in stimulated vs. unstimulated spasms using matched relative time windows.
+- **Input:** Preprocessed TT structure
+- **Output:** Band powers (100–500 Hz, 500–1000 Hz), PSD plots, statistics
+- **What it does:**
+  - Computes power spectral density using Welch's method
+  - Integrates power within frequency bands
+  - Validates offline analysis against real-time LabChart
+  - Generates histograms and comparison plots
+- **See:** `analysis/frequency_analysis/README.md`
 
-**Key Design**:
-- For each **stimulated spasm**, extract the exact window where it overlaps Ch3 ON
-- Apply that **relative window** (offset & duration from spasm start) to **all unstimulated spasms**
-- Compare amplitude percentiles (unpaired Wilcoxon test) — different events, not paired samples
+### 4️⃣ Feature Extraction
+**Create machine-learning ready features** for classification and statistical analysis.
 
-**Output**:
-- Per-spasm amplitude in stim and unstimulated windows
-- Summary statistics and rank-sum p-values
-- Multi-panel visualization:
-  - Signal overview with shaded spasm types and stimulus windows
-  - Individual points with mean ± SD per group
-  - Amplitude distributions with KDE overlay
-
----
-
-### 5. **Cross-Correlation Analysis** (`compare_files_xcorr.m`)
-**Purpose**: Quantify TA–MG temporal coordination via sliding cross-correlation.
-
-**Process**:
-- Compute maximum cross-correlation between TA and MG envelopes within specified lag window
-- Optional: restrict to activity intervals or user-defined time windows
-- Average correlation across recording segments
-- Compare groups (injured vs. uninjured)
-
-**Output**: Cross-correlation curves and group statistics.
+- **Input:** Preprocessed TT structure
+- **Output:** Feature table (amplitude, RMS, frequency content, entropy, correlation)
+- **What it does:**
+  - Computes time-domain features (mean, std, kurtosis, RMS)
+  - Computes frequency-domain features (band powers, spectral centroid)
+  - Computes statistical features (entropy, ApEn, SampEn)
+  - Cross-channel correlation analysis
+- **See:** `analysis/feature_extraction/README.md`
 
 ---
 
-## Utility Functions
+## Key Signals & Parameters
 
-### Filtering
-- **`butter_filter.m`**: Bandpass Butterworth (default 50–500 Hz, 2nd order, zero-phase)
-- **`notch_filter.m`**: Notch filter at 50 Hz to remove power line noise
+### Two Muscle Channels
+This pipeline analyzes:
+- **TA (Tibialis Anterior):** Anterior shin muscle
+- **MG (Medial Gastrocnemius):** Calf muscle
 
-### Mask Operations
-- **`keep_long_runs.m`**: Keep only mask regions ≥ minimum length (used for denoising brief artifacts)
-- **`fuse_masks.m`**: Merge nearby ON regions separated by < max_gap_ms
-- **`find_quiet_mask.m`**: Identify quiet samples using percentile-based thresholds
+Both are recorded simultaneously at **10 kHz sampling rate**.
 
-### Signal Processing
-- **`remove_artifacts.m`**: Replace NaN-heavy segments with NaN, segment data
-- **`detect_valid_acquisition_start.m`**: Auto-detect recording start time based on activity rise
-- **`snr_emg.m`**: Compute SNR and identify active samples
+### Signal Basis Options
+Choose which signal representation to use:
 
-### Plotting
-- **`plot_filtered.m`**: Stack-plot three channels with vertical spacing
-- **`plot_amplitudes.m`**: Visualize amplitude distribution
-- **`plot_frequency_spectrum.m`**: FFT-based spectral analysis
-- **`plot_PSD.m`**: Power spectral density
-- **`plot_rect_and_env.m`**: Rectified signal and envelope overlay
-- **`plot_TA_MG_correlation.m`**: Cross-correlation time-lag plot
+| Basis | Description | Best For |
+|-------|-------------|----------|
+| **raw** | Unfiltered 10 kHz signals | Spectral analysis, LabChart parity |
+| **filtered** | Butterworth bandpass (20–450 Hz) | Envelope extraction, spasm detection |
+| **rectified** | Absolute value of filtered signal | Legacy compatibility |
 
-### Synthetic Data
-- **`generate_synthetic_emg.m`**: Create test EMG with controlled spasms, gait, and noise for validation
+**Default:** `raw` (recommended for most applications)
 
-### Parameter Tuning
-- **`default_emg_parameters.m`**: Central configuration file defining all processing parameters
-- **`emg_parameter_tuning.m`**: Interactive GUI to test parameter sensitivity on a single recording
-
----
-
-## Data Format
-
-### Input
-- **MAT files** with structure:
-  ```
-  data__chan_1_rec_1  : TA channel, recording 1
-  data__chan_2_rec_1  : MG channel, recording 1
-  data__chan_3_rec_1  : Stimulus/trigger channel, recording 1
-  (repeat for rec_2, rec_3, ...)
-  ```
-- Optional: `filename_param.mat` containing saved parameters `P` for that file
-
-### Output Timetable (`TT_clean`)
-| Variable | Description |
-|----------|-------------|
-| `tDur` | Time vector (duration type) |
-| `TA_raw`, `MG_raw`, `Ch3_raw` | Scaled raw signals |
-| `TA`, `MG`, `Ch3` | Normalized signals |
-| `TA_f`, `MG_f` | Filtered signals (butter + notch) |
-| `TA_rect`, `MG_rect` | Rectified envelopes |
-| `TA_env`, `MG_env` | Smoothed envelopes |
-
----
-
-## Key Design Choices
-
-### 1. **Robust Scaling over Z-Score**
-Raw EMG has variable baseline drift and outliers. Median-based scaling `(x - median) / MAD` is less sensitive to artifacts than standard z-score normalization.
-
-### 2. **Percentile-Based Thresholds**
-Activity detection uses adaptive percentile thresholds (e.g., 70th) of the signal distribution rather than fixed amplitude cutoffs. This accommodates variable signal quality and recording conditions.
-
-### 3. **Unpaired Statistical Tests**
-When comparing stimulated vs. unstimulated spasms, Wilcoxon rank-sum is used (unpaired) because stimulated and unstimulated events are distinct spasms, not repeated measurements of the same event.
-
-### 4. **Matched Time Windows**
-The stimulus comparison uses relative (offset + duration) windows extracted from stimulated spasms, then applied to all unstimulated spasms. This ensures fair amplitude comparison by accounting for different spasm morphologies.
-
-### 5. **Mask Priority Hierarchy**
-In `spasm_gait_stim_analysis.m`, mutually exclusive states are assigned with priority: Spasm → Rest → Active → Other. This prevents ambiguous classifications.
-
-### 6. **Zero-Phase Filtering**
-All frequency-domain filters use `filtfilt` to eliminate phase distortion, critical for accurate temporal alignment and envelope detection.
-
----
-
-## Workflow Example
+### Key Parameters
+All configurable in `core/default_emg_parameters.m`:
 
 ```matlab
-% 1. Basic single-file pipeline
-P = default_emg_parameters();
-fs = 10000;
-[TT_clean, snrValue, meta, preview] = preprocess_and_label(P, fs);
-
-% 2. Run spasm detection and stim comparison
-out_spasm = spasm_gait_stim_analysis(TT_clean, snrValue, fs, ...
-    'SpasmPrcTA', 65, 'PlotResult', true);
-
-out_stim_comp = compare_spasm_stim_vs_nostim(TT_clean, snrValue, fs, ...
-    'SpasmPrcTA', 65, 'PlotResult', true);
-
-% 3. Multi-file group comparison
-Feature_Extraction;  % Interactive UI guides the process
+opt.fs = 10000;                    % Sampling frequency (Hz)
+opt.SignalBasis = 'raw';           % Signal representation
+opt.BandpassFreq = [20, 450];      % Filter frequency range
+opt.SpasmPrcTA = 75;               % Spasm detection threshold (percentile)
+opt.MinSpasmDuration = 0.2;        % Minimum spasm length (seconds)
+opt.AnalysisWindowLength = 0.1;    % FFT window (100 ms)
 ```
 
 ---
 
-## Tips & Troubleshooting
+## How to Use
 
-- **No quiet samples found**: Lower percentile thresholds in `default_emg_parameters.m` or check data quality
-- **Spasm threshold too high/low**: Adjust `SpasmPrcTA` / `SpasmPrcMG` in spasm detection functions
-- **Missing param file**: Script auto-defaults to `default_emg_parameters.m` — no error expected
-- **Artifact contamination**: Use `remove_artifacts.m` to replace high-noise segments with NaN
-- **Channel misalignment**: Verify MAT file naming convention (`data__chan_X_rec_Y`)
+### For First-Time Users
+
+**Start with the interactive menu:**
+```matlab
+cd Code/
+main
+```
+
+You'll see 9 menu options:
+1. Preprocess a single file
+2. Detect spasms
+3. Analyze frequency content
+4. Extract features
+5. Batch process multiple files
+6. Tune parameters
+7. Run validation tests
+8. Launch GUI interface
+9. View help documentation
+
+### For Command-Line Users
+
+Once you've explored via the menu, you can call functions directly:
+
+```matlab
+% Set up paths
+cd Code/
+main  % This auto-adds all folders to MATLAB path
+
+% Preprocess a file
+TT = preprocess_and_label('myfile.csv', 'SignalBasis', 'raw');
+
+% Detect spasms
+results = spasm_gait_stim_analysis(TT, snrValue, fs);
+
+% Analyze frequency content
+plot_spectral_comparison_advanced(TT, 'Gait');
+
+% Extract features
+features = Feature_Extraction(TT);
+```
+
+### For Batch Processing
+
+Process multiple files automatically:
+
+```matlab
+cd Code/
+main  % Sets up paths
+
+files = {'file1.csv', 'file2.csv', 'file3.csv'};
+for i = 1:length(files)
+    TT = preprocess_and_label(files{i}, 'SignalBasis', 'raw');
+    results = labchart_protocol_check_gait_vs_spasm(TT, [], TT.fs);
+end
+```
 
 ---
 
-## Code Cleanup
+## Documentation & Learning Path
 
-**Consolidated duplicate functions** (March 2026):
-- `keep_long_runs.m` now single source; removed local copies from `amplitude_distribution.m` and `compare_spasm_stim_vs_nostim.m`
-- `fuse_masks.m` is the definitive implementation
-- `shade_mask.m` helper used in `spasm_gait_stim_analysis.m`; similar `shade_ax.m` in `compare_spasm_stim_vs_nostim.m`
+New to EMG analysis? Here's where to start:
+
+### Quick References (5–10 min read)
+- **QUICKSTART.md** – Get up and running in 30 seconds
+- **REORGANIZATION_SUMMARY.md** – Overview of the new folder structure
+
+### Understanding the Concepts
+- **core/README.md** – Learn about signal preprocessing and signal basis options
+- **filters/README.md** – Understand filtering approaches
+- **utilities/README.md** – Explore helper functions
+
+### Deep Dives by Analysis Type
+- **analysis/spasm_detection/README.md** – Spasm event detection algorithms
+- **analysis/frequency_analysis/README.md** – Band-power computation and LabChart parity
+- **analysis/feature_extraction/README.md** – Machine-learning feature preparation
+
+### Implementation Details
+- **plotting/README.md** – Publication-ready visualization techniques
+- **tests/README.md** – Validation workflows and synthetic data generation
+- **data/README.md** – Data formats and naming conventions
+- **ARCHITECTURE.md** – System design and module dependencies
 
 ---
 
-## References
+## Common Workflows
 
-- **Envelope detection**: Standard rectify + low-pass filter approach (Tkach et al., J. Biomech. 2010)
-- **SNR computation**: Energy-ratio method comparing active vs. quiet windows
-- **Statistical testing**: Wilcoxon rank-sum for non-parametric unpaired comparisons (paired when appropriate)
-- **Cross-correlation**: Lag-sweep over ±2 s window (configurable)
+### Workflow 1: Quick Data Inspection
+```matlab
+main
+→ Select option 1 (Preprocess)
+→ Choose your CSV file
+→ View live plots and activity masks
+```
+
+### Workflow 2: Find Spasms in a Recording
+```matlab
+main
+→ Select option 2 (Spasm detection)
+→ Choose "Spasm vs. Gait comparison"
+→ View spasm events and statistics
+```
+
+### Workflow 3: Analyze Spectral Features (LabChart Parity)
+```matlab
+main
+→ Select option 3 (Frequency analysis)
+→ Choose "LabChart protocol validation"
+→ View 100–500 Hz band power and generate CSV
+```
+
+### Workflow 4: Extract ML Features
+```matlab
+main
+→ Select option 4 (Feature extraction)
+→ Get feature table ready for machine learning
+→ Export to CSV
+```
+
+### Workflow 5: Process Multiple Files
+```matlab
+main
+→ Select option 5 (Batch processing)
+→ Select multiple CSV files
+→ Automatic processing and summary statistics
+```
 
 ---
 
-## Contact & Maintenance
+## Key Design Principles
 
-Project structure designed for reproducibility and extensibility. All parameters centralized in `default_emg_parameters.m`. Add new metrics or plots in dedicated analysis scripts following the established naming convention.
+This pipeline is built on best practices for reproducible EMG analysis:
+
+✅ **Modular Design** – Separate preprocessing, analysis, and visualization for reusability  
+✅ **Configurable** – All parameters in one central file (`core/default_emg_parameters.m`)  
+✅ **Robust** – Handles artifacts, baseline drift, and variable signal quality  
+✅ **Transparent** – Clear documentation of all algorithms and design choices  
+✅ **Validated** – Synthetic data generation and parameter tuning tools included  
+✅ **Publication-Ready** – High-quality figures with proper scaling and labeling  
+
+### Signal Processing Highlights
+
+- **Zero-phase filtering:** Eliminates phase distortion using `filtfilt`
+- **Adaptive thresholds:** Percentile-based detection adapts to recording conditions
+- **Robust scaling:** Median-based normalization resists artifacts better than z-score
+- **Proper band-power integration:** Spectral features include frequency resolution (df) for correct units
+- **Activity-aware analysis:** All computations respect SNR-based activity masks
+
+---
+
+## Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| "Undefined function" error | Make sure you ran `main` first (it adds all paths) |
+| CSV file won't load | Check format: must have Time, TA, MG columns |
+| Spasm detection too sensitive | Use `main` → option 6 to tune percentile threshold |
+| Spectral analysis looks noisy | Try 'filtered' signal basis instead of 'raw' |
+| GUI doesn't launch | Ensure `interface.mlapp` exists in `config/` folder |
+| Out of memory with large files | Use batch processing to split into smaller chunks |
+
+For more help, see the **Help** section in the `main` menu (option 9).
+
+---
+
+## Input/Output Data Formats
+
+### Input: CSV Files from LabChart
+```
+Time(s),TA(V),MG(V),Stim(V),Notes
+0.0000,0.0012,-0.0008,0,Gait_Start
+0.0001,0.0015,-0.0009,0
+...
+```
+
+### Output: Results Directory
+All results automatically saved to:
+- **Figures/** – PNG/PDF plots (git-ignored)
+- **LabChart_protocol_results/** – CSV tables with band powers
+- **Your chosen folder** – Feature tables, statistics
+
+---
+
+## Requirements
+
+- **MATLAB R2019b or newer** (R2020a or later recommended)
+- **Signal Processing Toolbox**
+- No other special toolboxes required!
+
+---
+
+## Citation
+
+If you use this pipeline in your research, please cite:
+
+```bibtex
+@software{emg_analysis_2026,
+  author = {Your Lab Name},
+  title = {EMG Analysis Pipeline},
+  year = {2026},
+  url = {https://github.com/your-repo/emg-analysis}
+}
+```
+
+---
+
+## Contributing
+
+Found a bug? Have a suggestion? Contributions are welcome!
+
+Please follow the established naming conventions:
+- Analysis functions: `analysis/*/function_name.m`
+- Plotting functions: `plotting/plot_description.m`
+- Utility functions: `utilities/utility_name.m`
+- Tests: `tests/test_feature.m`
+
+All new functions should include:
+- Clear function header with purpose, inputs, outputs
+- Usage examples
+- Links to related functions
+
+---
+
+## Contact
+
+For questions or support:
+- Check the **Help** menu in `main`
+- Review module-specific README files
+- See ARCHITECTURE.md for system design details
+
+---
+
+**Last Updated:** May 2026  
+**Version:** 1.0 (Reorganized and documented)

@@ -1,22 +1,76 @@
-%% =========================
-% Master analysis script
-%% =========================
-clear; clc;
+function out = Feature_Extraction(varargin)
+% Feature_Extraction
+%
+% Group-level EMG analysis pipeline.
+%
+% NOTE: Despite the historical name, this function does NOT perform
+% per-window feature extraction. It runs two group-level comparisons:
+%   PART 1 — Injured vs Uninjured mice: SNR, PNR, contraction duration,
+%            TA-MG cross-correlation, TA-MG overlap.
+%   PART 2 — Stim ON vs Stim OFF amplitude across pooled recordings, via
+%            amplitude_distribution + overall_comparison_stim.
+%
+% Each part interactively prompts the user for the number of recordings
+% and loads them via uigetfile. Per-file condition and spasm intervals
+% are still asked through ask_condition_and_intervals.
+%
+% USAGE
+%   out = Feature_Extraction()
+%       Asks the user (via dialog) which of the two parts to run.
+%       Reproduces the original master-script behaviour.
+%
+%   out = Feature_Extraction('RunGroupCompare', true, 'RunStimCompare', false)
+%       Skips the initial Yes/No dialogs and runs only what is selected.
+%
+% NAME-VALUE OPTIONS
+%   'RunGroupCompare' : logical, run Part 1     (default [], asks via dialog)
+%   'RunStimCompare'  : logical, run Part 2     (default [], asks via dialog)
+%   'Fs'              : sampling frequency Hz   (default 10000)
+%   'MaxLagS'         : max xcorr lag in s      (default 2.0)
+%   'PreWindowS'      : [t0 t1] s for stim PRE  (default [-2 -0.2])
+%   'OnMinDurMs'      : min stim ON bout in ms  (default 100)
+%
+% OUTPUT (struct)
+%   out.group_compare : per-recording R, group means/SDs, xcOut   (Part 1)
+%   out.stim_compare  : MG / TA amplitude_distribution outputs    (Part 2)
 
-fs = 10000;
-max_lag_s = 2.0;
+%% ---- Parse options ----
+p = inputParser;
+p.addParameter('RunGroupCompare', [], @(x) isempty(x) || (islogical(x) && isscalar(x)));
+p.addParameter('RunStimCompare',  [], @(x) isempty(x) || (islogical(x) && isscalar(x)));
+p.addParameter('Fs',         10000,    @(x) isnumeric(x) && isscalar(x) && x > 0);
+p.addParameter('MaxLagS',    2.0,      @(x) isnumeric(x) && isscalar(x) && x > 0);
+p.addParameter('PreWindowS', [-2 -0.2],@(x) isnumeric(x) && numel(x) == 2 && x(1) < x(2));
+p.addParameter('OnMinDurMs', 100,      @(x) isnumeric(x) && isscalar(x) && x > 0);
+p.parse(varargin{:});
+opt = p.Results;
 
-%% ---- Ask user what to run ----
-ans1 = questdlg('Do you want to run the comparison between injured and uninjured mice?', ...
-    'Group comparison', 'Yes', 'No', 'Yes');
-run_group_compare = strcmp(ans1, 'Yes');
+fs        = opt.Fs;
+max_lag_s = opt.MaxLagS;
+preWinS   = opt.PreWindowS;
+onMinMs   = opt.OnMinDurMs;
 
-ans2 = questdlg('Do you want to run the comparison between stim ON and stim OFF?', ...
-    'Stim ON/OFF comparison', 'Yes', 'No', 'Yes');
-run_stim_compare = strcmp(ans2, 'Yes');
+out = struct();
+
+%% ---- Resolve which analyses to run ----
+if isempty(opt.RunGroupCompare)
+    ans1 = questdlg('Do you want to run the comparison between injured and uninjured mice?', ...
+        'Group comparison', 'Yes', 'No', 'Yes');
+    run_group_compare = strcmp(ans1, 'Yes');
+else
+    run_group_compare = opt.RunGroupCompare;
+end
+
+if isempty(opt.RunStimCompare)
+    ans2 = questdlg('Do you want to run the comparison between stim ON and stim OFF?', ...
+        'Stim ON/OFF comparison', 'Yes', 'No', 'Yes');
+    run_stim_compare = strcmp(ans2, 'Yes');
+else
+    run_stim_compare = opt.RunStimCompare;
+end
 
 if ~run_group_compare && ~run_stim_compare
-    error('Nothing selected.');
+    error('Feature_Extraction: nothing selected.');
 end
 
 %% ============================================================
@@ -57,15 +111,15 @@ if run_group_compare
                        'Select ONE experiment MAT file.'], k, nFiles);
         uiwait(msgbox(msg, 'Select experiment file', 'modal'));
 
-        [f,p] = uigetfile('*.mat', sprintf('Select experiment MAT file (%d/%d)', k, nFiles));
+        [f,p_dir] = uigetfile('*.mat', sprintf('Select experiment MAT file (%d/%d)', k, nFiles));
         if isequal(f,0), error('File selection cancelled.'); end
 
-        fullFile = fullfile(p,f);
+        fullFile = fullfile(p_dir,f);
         fprintf('\n=== [%d/%d] Processing: %s ===\n', k, nFiles, fullFile);
 
         % --- Load params if a _param file exists, otherwise use defaults ---
         [~, srcName, ~] = fileparts(f);
-        paramFile = fullfile(p, [srcName, '_param.mat']);
+        paramFile = fullfile(p_dir, [srcName, '_param.mat']);
         if isfile(paramFile)
             fprintf('    Found param file: %s\n', paramFile);
             tmp = load(paramFile, 'P');
@@ -257,24 +311,24 @@ if run_group_compare
     subplot(3,2,1);
     b = bar(M_SNR); hold on;
     x = arrayfun(@(i) b(i).XEndPoints, 1:numel(b), 'UniformOutput', false);
-    errorbar(x{1}, M_SNR(:,1), SD_SNR(:,1), 'w', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
-    errorbar(x{2}, M_SNR(:,2), SD_SNR(:,2), 'w', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
+    errorbar(x{1}, M_SNR(:,1), SD_SNR(:,1), 'k', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
+    errorbar(x{2}, M_SNR(:,2), SD_SNR(:,2), 'k', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
     set(gca,'XTickLabel',{'Uninjured','Spastic'}); legend({'TA','MG'},'Location','best');
     ylabel('Mean SNR (linear)'); grid on; ylim([0 yMaxSNR]); title('Signal-to-Noise Ratio');
 
     subplot(3,2,2);
     b = bar(M_PNR); hold on;
     x = arrayfun(@(i) b(i).XEndPoints, 1:numel(b), 'UniformOutput', false);
-    errorbar(x{1}, M_PNR(:,1), SD_PNR(:,1), 'w', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
-    errorbar(x{2}, M_PNR(:,2), SD_PNR(:,2), 'w', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
+    errorbar(x{1}, M_PNR(:,1), SD_PNR(:,1), 'k', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
+    errorbar(x{2}, M_PNR(:,2), SD_PNR(:,2), 'k', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
     set(gca,'XTickLabel',{'Uninjured','Spastic'}); legend({'TA','MG'},'Location','best');
     ylabel('Mean Peak-to-Noise Ratio'); grid on; ylim([0 yMaxPNR]); title('Peak-to-Noise Ratio');
 
     subplot(3,2,3);
     b = bar(M_DUR); hold on;
     x = arrayfun(@(i) b(i).XEndPoints, 1:numel(b), 'UniformOutput', false);
-    errorbar(x{1}, M_DUR(:,1), SD_DUR(:,1), 'w', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
-    errorbar(x{2}, M_DUR(:,2), SD_DUR(:,2), 'w', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
+    errorbar(x{1}, M_DUR(:,1), SD_DUR(:,1), 'k', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
+    errorbar(x{2}, M_DUR(:,2), SD_DUR(:,2), 'k', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
     set(gca,'XTickLabel',{'Uninjured (normal)','Spastic (spasm)'}); legend({'TA','MG'},'Location','best');
     ylabel('Contraction duration (s)'); grid on; ylim([0 yMaxDur]); title('Contraction Duration');
 
@@ -291,18 +345,33 @@ if run_group_compare
     muPeak = [mean(peak_uninj,'omitnan'), mean(peak_inj,'omitnan')];
     sdPeak = [std(peak_uninj,0,'omitnan'), std(peak_inj,0,'omitnan')];
     b = bar(muPeak); hold on;
-    errorbar(b.XEndPoints, muPeak, sdPeak, 'w', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
+    errorbar(b.XEndPoints, muPeak, sdPeak, 'k', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
     set(gca,'XTickLabel',{'Uninjured','Spastic'}); ylabel('Lag at peak xcorr (s)');
     title('TA-MG cross-correlation peak lag'); grid on;
 
     subplot(3,2,6);
     b = bar(M_OV); hold on;
-    errorbar(b.XEndPoints, M_OV, SD_OV, 'w', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
+    errorbar(b.XEndPoints, M_OV, SD_OV, 'k', 'LineWidth', 3, 'CapSize', 14, 'LineStyle', 'none');
     set(gca,'XTickLabel',{'Uninjured (normal)','Spastic (spasm)'});
     ylabel('TA-MG overlap bout duration (s)'); grid on; ylim([0 yMaxOv]);
     title('TA & MG overlap duration');
 
     exportgraphics(gcf, 'group_comparison.pdf', 'ContentType', 'vector');
+
+    %% ---- Capture results ----
+    out.group_compare = struct();
+    out.group_compare.R          = R;
+    out.group_compare.M_SNR      = M_SNR;
+    out.group_compare.SD_SNR     = SD_SNR;
+    out.group_compare.M_PNR      = M_PNR;
+    out.group_compare.SD_PNR     = SD_PNR;
+    out.group_compare.M_DUR      = M_DUR;
+    out.group_compare.SD_DUR     = SD_DUR;
+    out.group_compare.M_OV       = M_OV;
+    out.group_compare.SD_OV      = SD_OV;
+    out.group_compare.xcOut      = xcOut;
+    out.group_compare.peak_uninj = peak_uninj;
+    out.group_compare.peak_inj   = peak_inj;
 end
 
 %% ============================================================
@@ -328,15 +397,15 @@ if run_stim_compare
                        'Select ONE experiment MAT file.'], k, nStimFiles);
         uiwait(msgbox(msg, 'Select experiment file', 'modal'));
 
-        [f,p] = uigetfile('*.mat', sprintf('Select experiment MAT file (%d/%d)', k, nStimFiles));
+        [f,p_dir] = uigetfile('*.mat', sprintf('Select experiment MAT file (%d/%d)', k, nStimFiles));
         if isequal(f,0), error('File selection cancelled.'); end
 
-        fullFile = fullfile(p,f);
+        fullFile = fullfile(p_dir,f);
         fprintf('\n=== [%d/%d] Stim analysis: %s ===\n', k, nStimFiles, fullFile);
 
         % --- Load params if a _param file exists, otherwise use defaults ---
         [~, srcName, ~] = fileparts(f);
-        paramFile = fullfile(p, [srcName, '_param.mat']);
+        paramFile = fullfile(p_dir, [srcName, '_param.mat']);
         if isfile(paramFile)
             fprintf('    Found param file: %s\n', paramFile);
             tmp = load(paramFile, 'P');
@@ -370,8 +439,8 @@ if run_stim_compare
     outStim_MG = amplitude_distribution( ...
         MG_signals, Ch3_signals, fs, ...
         'MGAlreadyAmplitude', true, ...
-        'PreWindowS', [-2 -0.2], ...
-        'OnMinDurMs', 100, ...
+        'PreWindowS', preWinS, ...
+        'OnMinDurMs', onMinMs, ...
         'TitleStr', 'MG amplitude during Ch3 ON vs local pre-ON OFF window');
 
     disp('--- MG summary ---');
@@ -382,8 +451,8 @@ if run_stim_compare
     outStim_TA = amplitude_distribution( ...
         TA_signals, Ch3_signals, fs, ...
         'MGAlreadyAmplitude', true, ...
-        'PreWindowS', [-2 -0.2], ...
-        'OnMinDurMs', 100, ...
+        'PreWindowS', preWinS, ...
+        'OnMinDurMs', onMinMs, ...
         'TitleStr', 'TA amplitude during Ch3 ON vs local pre-ON OFF window');
 
     disp('--- TA summary ---');
@@ -391,8 +460,18 @@ if run_stim_compare
 
     % -------- Overall collapsed comparison --------
     overall_comparison_stim(TA_signals, MG_signals, Ch3_signals, fs, ...
-        'PreWindowS', [-2 -0.2], ...
-        'OnMinDurMs', 100);
+        'PreWindowS', preWinS, ...
+        'OnMinDurMs', onMinMs);
+
+    %% ---- Capture results ----
+    out.stim_compare = struct();
+    out.stim_compare.MG          = outStim_MG;
+    out.stim_compare.TA          = outStim_TA;
+    out.stim_compare.TA_signals  = TA_signals;
+    out.stim_compare.MG_signals  = MG_signals;
+    out.stim_compare.Ch3_signals = Ch3_signals;
+end
+
 end
 
 %% =========================
@@ -574,7 +653,7 @@ b.CData(1,:) = clrOFF;
 b.CData(2,:) = clrON;
 hold on;
 errorbar(b.XEndPoints, mu_ta, sd_ta, ...
-    'w', 'LineWidth', 2, 'CapSize', 12, 'LineStyle', 'none');
+    'k', 'LineWidth', 2, 'CapSize', 12, 'LineStyle', 'none');
 set(gca, 'XTick', 1:2, 'XTickLabel', {'Stim OFF', 'Stim ON'});
 ylabel('Mean EMG Amplitude');
 ylim([0, yMaxTA]);
@@ -588,7 +667,7 @@ b.CData(1,:) = clrOFF;
 b.CData(2,:) = clrON;
 hold on;
 errorbar(b.XEndPoints, mu_mg, sd_mg, ...
-    'w', 'LineWidth', 2, 'CapSize', 12, 'LineStyle', 'none');
+    'k', 'LineWidth', 2, 'CapSize', 12, 'LineStyle', 'none');
 set(gca, 'XTick', 1:2, 'XTickLabel', {'Stim OFF', 'Stim ON'});
 ylabel('Mean EMG Amplitude');
 ylim([0, yMaxMG]);

@@ -23,6 +23,11 @@ histogram(ax, signal, edges, ...
     'EdgeColor', 'none',      ...
     'FaceAlpha', 0.8);
 
+% Center 0 in the middle by using symmetric limits
+maxAbs = max(abs([xMin, xMax]));
+xlim(ax, [-maxAbs, maxAbs]);
+xline(ax, 0, '-', 'Color', [0.7 0.7 0.7], 'LineWidth', 1);
+
 xlabel(ax, 'Amplitude');
 ylabel(ax, 'Count');
 title(ax,  'Amplitude Distribution');

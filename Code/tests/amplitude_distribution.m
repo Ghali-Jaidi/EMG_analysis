@@ -546,12 +546,12 @@ col_pre  = [0.2  0.6  1.0];
 col_on   = [1.0  0.3  0.3];
 col_post = [0.2  0.85 0.4];
 
-figure('Color', 'k', 'Name', char(opt.TitleStr));
+figure('Color', 'w', 'Name', char(opt.TitleStr));
 
 % ---------- Subplot 1 ----------
 ax1 = subplot(2,2,1);
 hold(ax1,'on');
-set(ax1,'Color','k','XColor','w','YColor','w','GridColor',[0.4 0.4 0.4]);
+set(ax1,'Color','w','XColor','k','YColor','k','GridColor',[0.6 0.6 0.6]);
 grid(ax1,'on');
 
 colors = lines(height(T));
@@ -580,18 +580,18 @@ xlim(ax1, [0.5 3.5]);
 xticks(ax1, [1 2 3]);
 
 if opt.NormalizeToOn
-    ylabel(ax1, 'Amplitude (fraction of ON)', 'Color', 'w');
+    ylabel(ax1, 'Amplitude (fraction of ON)', 'Color', 'k');
     xticklabels(ax1, {'Pre/On', 'On/On', 'Post/On'});
 else
-    ylabel(ax1, 'Amplitude (raw)', 'Color', 'w');
+    ylabel(ax1, 'Amplitude (raw)', 'Color', 'k');
     xticklabels(ax1, {'Pre-ON', 'ON', 'Post-ON'});
 end
-title(ax1, char(opt.TitleStr), 'Color', 'w');
+title(ax1, char(opt.TitleStr), 'Color', 'k');
 
 % ---------- Subplot 2 ----------
 ax2 = subplot(2,2,2);
 hold(ax2,'on');
-set(ax2,'Color','k','XColor','w','YColor','w','GridColor',[0.4 0.4 0.4]);
+set(ax2,'Color','w','XColor','k','YColor','k','GridColor',[0.6 0.6 0.6]);
 grid(ax2,'on');
 
 delta_pre_finite  = delta_pre(valid_delta_pre);
@@ -632,28 +632,25 @@ if ~isempty(all_d)
     xline(ax2, 0, '--r', 'LineWidth', 1.2, 'HandleVisibility','off');
 end
 
-
-ylabel(ax2, 'Density', 'Color','w');
+ylabel(ax2, 'Density', 'Color','k');
 if opt.NormalizeToOn
-    xlabel(ax2, '\Delta normalized amplitude (ON - Pre/On)', 'Color', 'w');
+    xlabel(ax2, '\Delta normalized amplitude (ON - Pre/On)', 'Color', 'k');
     delta_label = sprintf('med \x394=%.3f', summary.median_delta);
 else
-    xlabel(ax2, '\Delta raw amplitude (ON - Pre)', 'Color', 'w');
+    xlabel(ax2, '\Delta raw amplitude (ON - Pre)', 'Color', 'k');
     delta_label = sprintf('med \x394=%.4f', summary.median_delta);
 end
 
 title(ax2, sprintf('nPRE=%d nPOST=%d | %s | p=%.3g', ...
     summary.n_events_pre, summary.n_events_post, ...
-    delta_label, summary.p_signrank), 'Color', 'w');
+    delta_label, summary.p_signrank), 'Color', 'k');
 
-legend(ax2, 'TextColor','w','Color','k','Location','best');
-
-
+legend(ax2, 'TextColor','k','Color','w','Location','best');
 
 % ---------- Subplot 3 ----------
 ax3 = subplot(2,2,3);
 hold(ax3,'on');
-set(ax3,'Color','k','XColor','w','YColor','w','GridColor',[0.4 0.4 0.4]);
+set(ax3,'Color','w','XColor','k','YColor','k','GridColor',[0.6 0.6 0.6]);
 grid(ax3,'on');
 
 if opt.NormalizeToOn
@@ -669,12 +666,12 @@ end
 all_vals = [mg_pre_plot; mg_on_plot; mg_post_plot];
 
 if opt.NormalizeToOn
-    xlabel(ax3, 'Amplitude (fraction of ON)', 'Color', 'w');
+    xlabel(ax3, 'Amplitude (fraction of ON)', 'Color', 'k');
     lbl_pre = 'Pre-ON (normalized)';
     lbl_on  = 'ON (normalized)';
     lbl_post = 'Post-ON (normalized)';
 else
-    xlabel(ax3, 'Amplitude (raw)', 'Color', 'w');
+    xlabel(ax3, 'Amplitude (raw)', 'Color', 'k');
     lbl_pre  = 'Pre-ON (OFF)';
     lbl_on   = 'Ch3 ON';
     lbl_post = 'Post-ON (OFF)';
@@ -720,23 +717,19 @@ if ~isempty(all_vals)
     end
 end
 
-
-ylabel(ax3,'Density','Color','w');
-title(ax3,'Amplitude distribution: Pre / ON / Post','Color','w');
-
-
-
-legend(ax3,'TextColor','w','Color','k','Location','best');
+ylabel(ax3,'Density','Color','k');
+title(ax3,'Amplitude distribution: Pre / ON / Post','Color','k');
+legend(ax3,'TextColor','k','Color','w','Location','best');
 
 % ---------- Subplot 4 ----------
 ax4 = subplot(2,2,4);
 hold(ax4,'on');
-set(ax4,'Color','k','XColor','w','YColor','w','GridColor',[0.4 0.4 0.4]);
+set(ax4,'Color','w','XColor','k','YColor','k','GridColor',[0.6 0.6 0.6]);
 grid(ax4,'on');
 if opt.NormalizeToOn
-    xlabel(ax4, 'Amplitude (fraction of ON)', 'Color', 'w');
+    xlabel(ax4, 'Amplitude (fraction of ON)', 'Color', 'k');
 else
-    xlabel(ax4, 'Amplitude (raw)', 'Color', 'w');
+    xlabel(ax4, 'Amplitude (raw)', 'Color', 'k');
 end
 
 if ~isempty(mg_pre_plot)
@@ -752,10 +745,10 @@ if ~isempty(mg_post_plot)
     plot(ax4,x,f,'-','Color',col_post,'LineWidth',2,'DisplayName',lbl_post);
 end
 
-xlabel(ax4,'Amplitude','Color','w');
-ylabel(ax4,'Cumulative probability','Color','w');
-title(ax4,'Cumulative distribution: Pre / ON / Post','Color','w');
-legend(ax4,'TextColor','w','Color','k','Location','best');
+xlabel(ax4,'Amplitude','Color','k');
+ylabel(ax4,'Cumulative probability','Color','k');
+title(ax4,'Cumulative distribution: Pre / ON / Post','Color','k');
+legend(ax4,'TextColor','k','Color','w','Location','best');
 
 out.event_table = T;
 out.delta       = delta_pre;

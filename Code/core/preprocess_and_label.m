@@ -93,16 +93,16 @@ TT.MG  = TT.MG_raw;
 TT.Ch3 = TT.Ch3_raw;
 
 %% ---- Filters ----
-%TT.TA_f = notch_filter(butter_filter(TT.TA));
-%TT.MG_f = notch_filter(butter_filter(TT.MG));
-TT.TA_f = TT.TA;
-TT.MG_f = TT.MG;
+TT.TA_f = notch_filter(butter_filter(TT.TA));
+TT.MG_f = notch_filter(butter_filter(TT.MG));
+%TT.TA_f = TT.TA;
+%TT.MG_f = TT.MG;
 
 t = seconds(TT.tDur);
 
 if options.plot_figures
     plot_filtered(TT.TA_f, TT.MG_f, TT.Ch3, t);
-    plot_PSD(TT.TA, TT.TA_f, TT.MG, TT.MG_f);
+    plot_PSD(TT.TA, TT.TA_f, TT.MG, TT.MG_f, fs);
     
 end
 
@@ -298,6 +298,7 @@ if options.plot_figures
     fprintf('SNR -> TA: %.2f (%.2f dB)   MG: %.2f (%.2f dB)\n', ...
         snrValue.SNR_TA, snrValue.SNR_dB, snrValue.SNR_MG, snrValue.SNR_MG_dB);
 
+    fprintf('[preprocess_and_label] Creating amplitude distribution figure...\n');
     figure;
     subplot(2,1,1);
     plot_amplitudes(TT.TA_f(is_valid_acq), 'NumBins', 100, 'Axes', gca, ...
@@ -308,11 +309,15 @@ if options.plot_figures
     plot_amplitudes(TT.MG_f(is_valid_acq), 'NumBins', 100, 'Axes', gca, ...
         'ThrAct', snrValue.thr_act_MG, 'NoiseRMS', noise_rms_MG);
     title('Left MG - Amplitude Distribution (unrectified)');
-
+    fprintf('[preprocess_and_label] Amplitude distribution figure completed\n');
     
+    fprintf('[preprocess_and_label] Creating filtered labeled figure...\n');
     plot_filtered_labeled(TA_plot, MG_plot, TT_clean.Ch3, ...
         seconds(TT_clean.tDur), snrValue);
+    fprintf('[preprocess_and_label] Filtered labeled figure completed\n');
+    
     % ---- Highlight TA∩MG overlap (both active) ----
+    fprintf('[preprocess_and_label] Creating overlap figure...\n');
     ov = snrValue.is_act(:) & snrValue.is_act_MG(:);
     
     tsec = seconds(TT_clean.tDur);
@@ -320,9 +325,9 @@ if options.plot_figures
     figure('Name','TA/MG activity overlap');
     ax = axes; hold(ax,'on'); grid(ax,'on');
     
-    % plot signals (same ones you used above)
-    plot(ax, tsec, TA_plot, 'DisplayName','TA');
-    plot(ax, tsec, MG_plot, 'DisplayName','MG');
+    % plot signals on top of each other with different line styles for visibility
+    plot(ax, tsec, TA_plot, 'g', 'LineWidth', 1, 'DisplayName','TA');
+    plot(ax, tsec, MG_plot, 'b', 'LineWidth', 1, 'DisplayName','MG');
     
     % shade overlap regions
     yl = ylim(ax);
@@ -344,6 +349,7 @@ if options.plot_figures
     xlabel(ax,'Time (s)');
     ylabel(ax,'Amplitude');
     title(ax,'Overlap highlighted (TA & MG active)');
+    fprintf('[preprocess_and_label] Overlap figure completed\n');
 
 end
 
