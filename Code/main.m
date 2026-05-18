@@ -39,14 +39,13 @@ while true
     fprintf('2. Spasm detection & analysis (single recording)\n');
     fprintf('3. Frequency analysis (spectral features)\n');
     fprintf('4. Cross-recording group analyses (multiple files)\n');
-    fprintf('5. Parameter tuning\n');
-    fprintf('6. Run validation tests\n');
-    fprintf('7. Launch GUI interface\n');
-    fprintf('8. Display help & documentation\n');
+    fprintf('5. Run validation tests\n');
+    fprintf('6. Launch GUI interface\n');
+    fprintf('7. Display help & documentation\n');
     fprintf('0. Exit\n');
     fprintf('\n');
     
-    choice = input('Select an option (0-8): ', 's');
+    choice = input('Select an option (0-7): ', 's');
     
     switch choice
         case '1'
@@ -62,15 +61,12 @@ while true
             run_feature_extraction_menu();
             
         case '5'
-            run_parameter_tuning_menu();
-            
-        case '6'
             run_validation_tests_menu();
             
-        case '7'
+        case '6'
             run_gui_interface();
             
-        case '8'
+        case '7'
             display_help_menu();
             
         case '0'
@@ -78,7 +74,7 @@ while true
             return;
             
         otherwise
-            fprintf('Invalid choice. Please enter 0-8.\n');
+            fprintf('Invalid choice. Please enter 0-7.\n');
     end
 end
 
@@ -402,64 +398,6 @@ function run_feature_extraction_menu()
 end
 
 % =========================================================================
-% PARAMETER TUNING
-% =========================================================================
-function run_parameter_tuning_menu()
-    fprintf('\n--- PARAMETER TUNING ---\n');
-    
-    % Load or preprocess
-    [TT, ~, success] = load_or_preprocess();
-    if ~success, return; end
-    
-    fprintf('\nParameter tuning for spasm detection:\n');
-    fprintf('Select tuning method:\n');
-    fprintf('1. Percentile threshold (automatic search)\n');
-    fprintf('2. Manual threshold adjustment\n');
-    choice = input('Choice (1-2): ', 's');
-    
-    switch choice
-        case '1'
-            fprintf('\nTesting percentile range (50th to 95th)...\n');
-            try
-                % Create activity mask from envelope if not available in TT
-                if ismember('is_act_TA', TT.Properties.VariableNames)
-                    is_act_TA = TT.is_act_TA;
-                else
-                    % Create simple activity mask: samples where envelope is above minimum
-                    is_act_TA = TT.TA_env > 0.1 * max(TT.TA_env);
-                end
-                
-                prc_range = 50:5:95;
-                results = emg_parameter_tuning(TT, is_act_TA, prc_range, ...
-                    'Method', 'percentile', 'Metric', 'f1');
-                
-                if isfield(results, 'optimal_threshold')
-                    fprintf('Optimal threshold: %.1f percentile\n', results.optimal_threshold);
-                    fprintf('Sensitivity: %.2f%%\n', results.sensitivity*100);
-                    fprintf('Specificity: %.2f%%\n', results.specificity*100);
-                end
-            catch ME
-                fprintf('Error: %s\n', ME.message);
-            end
-            
-        case '2'
-            fprintf('\nManual threshold adjustment:\n');
-            fprintf('Current parameters:\n');
-            opt = default_emg_parameters();
-            fprintf('  TA spasm threshold (percentile): %d\n', opt.SpasmPrcTA);
-            fprintf('  MG spasm threshold (percentile): %d\n', opt.SpasmPrcMG);
-            fprintf('  Min spasm duration: %.2f s\n', opt.MinSpasmDuration / opt.fs);
-            
-            % Get user inputs
-            new_prc = input('Enter new percentile for TA spasm (50-95, or empty to skip): ', 's');
-            if ~isempty(new_prc)
-                opt.SpasmPrcTA = str2double(new_prc);
-                fprintf('Updated TA spasm threshold to: %.1f percentile\n', opt.SpasmPrcTA);
-            end
-    end
-end
-
-% =========================================================================
 % VALIDATION TESTS
 % =========================================================================
 function run_validation_tests_menu()
@@ -472,40 +410,79 @@ function run_validation_tests_menu()
     
     switch choice
         case '1'
-            fprintf('\nRunning full spasm detection test... ');
+            fprintf('\nRunning full spasm detection test...\n');
             try
-                test_results = Test_full_spasm_detection();
-                fprintf('Test complete.\n');
+                % Test_full_spasm_detection is a script, use run() to execute it
+                run(fullfile(fileparts(mfilename('fullpath')), 'tests', 'Test_full_spasm_detection.m'));
+                fprintf('\nTest complete.\n');
             catch ME
                 fprintf('Error: %s\n', ME.message);
             end
             
         case '2'
             fprintf('\nAnalyzing amplitude distribution...\n');
-            [TT, ~, success] = load_or_preprocess();
-            if success
-                try
-                    dist_results = amplitude_distribution(TT.TA_env, TT.MG_env, {'TA', 'MG'});
-                    fprintf('Analysis complete.\n');
-                catch ME
-                    fprintf('Error: %s\n', ME.message);
+            % For this test, automatically skip plots to avoid display clutter
+            P = default_emg_parameters();
+            try
+                fprintf('\nPreprocessing options:\nSkipping plots automatically for this analysis.\n\n');
+                [TT, snrValue, ~, ~] = preprocess_and_label(P, 10000, 'plot_figures', false, 'save_figures', false);
+                
+                % amplitude_distribution requires (signal1, signal2, fs, varargin)
+                fs = 10000;
+                
+                % Extract numeric arrays from timetable columns
+                % Convert to double arrays to ensure compatibility
+                if ismember('TA_env', TT.Properties.VariableNames) && ismember('MG_env', TT.Properties.VariableNames)
+                    ta_env = double(table2array(TT(:, 'TA_env')));
+                    mg_env = double(table2array(TT(:, 'MG_env')));
+                    
+                    % Also check for Ch3 signal
+                    if ismember('Ch3_raw', TT.Properties.VariableNames)
+                        ch3_sig = double(table2array(TT(:, 'Ch3_raw')));
+                    elseif ismember('Ch3_f', TT.Properties.VariableNames)
+                        ch3_sig = double(table2array(TT(:, 'Ch3_f')));
+                    else
+                        % Fallback: use zeros if no Ch3
+                        ch3_sig = zeros(numel(ta_env), 1);
+                    end
+                    
+                    % Analyze TA amplitude distribution
+                    fprintf('\n--- TA Amplitude Distribution ---\n');
+                    dist_results_ta = amplitude_distribution(ta_env, ch3_sig, fs, ...
+                        'MGAlreadyAmplitude', true, ...
+                        'TitleStr', 'TA amplitude distribution');
+                    fprintf('TA analysis complete.\n');
+                    
+                    % Analyze MG amplitude distribution
+                    fprintf('\n--- MG Amplitude Distribution ---\n');
+                    dist_results_mg = amplitude_distribution(mg_env, ch3_sig, fs, ...
+                        'MGAlreadyAmplitude', true, ...
+                        'TitleStr', 'MG amplitude distribution');
+                    fprintf('MG analysis complete.\n');
+                    
+                else
+                    fprintf('Error: Required signal columns not found in preprocessed data.\n');
                 end
+            catch ME
+                fprintf('Error: %s\n', ME.message);
+                fprintf('Stack:\n');
+                disp(ME.stack);
             end
             
         case '3'
             fprintf('\nGenerating synthetic EMG data...\n');
             try
-                [signal, ground_truth, params] = generate_synthetic_emg(...
-                    'duration', 30, 'num_spasms', 5, 'snr_db', 20);
+                % generate_synthetic_emg returns a struct with data__chan_X_rec_Y fields
+                S = generate_synthetic_emg('DurS', 300, 'NSpasms', 9, 'PlotResult', true);
                 fprintf('Synthetic signal generated:\n');
-                fprintf('  Duration: %.1f seconds\n', params.duration);
-                fprintf('  Number of spasms: %d\n', params.num_spasms);
-                fprintf('  SNR: %d dB\n', params.snr_db);
+                fprintf('  Duration: 300.0 seconds\n');
+                fprintf('  Number of spasms: 10\n');
+                fprintf('  File: synthetic_rec.mat\n');
                 
                 % Save option
                 save_choice = input('Save synthetic data? (y/n) [default: n]: ', 's');
                 if lower(save_choice) == 'y'
-                    save('synthetic_test_data.mat', 'signal', 'ground_truth', 'params');
+                    save('synthetic_test_data.mat', 'S');
                     fprintf('Saved to: synthetic_test_data.mat\n');
                 end
             catch ME
@@ -520,7 +497,7 @@ end
 function run_gui_interface()
     fprintf('\nLaunching GUI interface...\n');
     try
-        interface;
+        Interface_GUI;
     catch ME
         fprintf('Error launching GUI: %s\n', ME.message);
         fprintf('Make sure interface.mlapp exists in config/ folder.\n');

@@ -306,35 +306,36 @@ S.ground_truth.gain          = gain;
 % 11. PLOT
 %% ================================================================
 if opt.PlotResult
-    figure('Color','k','Name','Synthetic EMG','Position',[50 50 1400 650]);
-
+    % Replace this block in section 11:
+    figure('Color','w','Name','Synthetic EMG','Position',[50 50 1400 650]);
+    
     ax1 = subplot(3,1,1);
     hold(ax1,'on');
-    set(ax1,'Color','k','XColor','w','YColor','w');
-    plot(ax1, t, TA, 'Color',[0.4 0.8 1],'LineWidth',0.5);
+    set(ax1,'Color','w','XColor','k','YColor','k');
+    plot(ax1, t, TA, 'Color',[0 0.45 0.7],'LineWidth',0.5);
     shade_regions(ax1, t, is_gait_true,  [0.2 1 0.4], 0.22);
     shade_regions(ax1, t, is_spasm_true, [1 0.2 0.2], 0.30);
-    shade_regions(ax1, t, is_ch3_on,     [0 1 1],     0.12);
-    ylabel(ax1,'TA','Color','w');
-    title(ax1,'Synthetic EMG','Color','w');
+    shade_regions(ax1, t, is_ch3_on,     [0 0.8 0.8], 0.12);
+    ylabel(ax1,'TA','Color','k');
+    title(ax1,'Synthetic EMG','Color','k');
     xlim(ax1,[0 opt.DurS]);
-
+    
     ax2 = subplot(3,1,2);
     hold(ax2,'on');
-    set(ax2,'Color','k','XColor','w','YColor','w');
-    plot(ax2, t, MG, 'Color',[0.8 0.5 1],'LineWidth',0.5);
+    set(ax2,'Color','w','XColor','k','YColor','k');
+    plot(ax2, t, MG, 'Color',[0.5 0.1 0.7],'LineWidth',0.5);
     shade_regions(ax2, t, is_gait_true,  [0.2 1 0.4], 0.22);
     shade_regions(ax2, t, is_spasm_true, [1 0.2 0.2], 0.30);
-    shade_regions(ax2, t, is_ch3_on,     [0 1 1],     0.12);
-    ylabel(ax2,'MG','Color','w');
+    shade_regions(ax2, t, is_ch3_on,     [0 0.8 0.8], 0.12);
+    ylabel(ax2,'MG','Color','k');
     xlim(ax2,[0 opt.DurS]);
-
+    
     ax3 = subplot(3,1,3);
     hold(ax3,'on');
-    set(ax3,'Color','k','XColor','w','YColor','w');
-    plot(ax3, t, Ch3, 'Color',[0 1 1],'LineWidth',1);
-    ylabel(ax3,'Ch3','Color','w');
-    xlabel(ax3,'Time (s)','Color','w');
+    set(ax3,'Color','w','XColor','k','YColor','k');
+    plot(ax3, t, Ch3, 'Color',[0 0.7 0.7],'LineWidth',1);
+    ylabel(ax3,'Ch3','Color','k');
+    xlabel(ax3,'Time (s)','Color','k');
     xlim(ax3,[0 opt.DurS]);
 
     linkaxes([ax1 ax2 ax3],'x');

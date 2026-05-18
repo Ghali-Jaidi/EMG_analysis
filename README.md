@@ -87,7 +87,7 @@ Code/
 - **See:** `analysis/frequency_analysis/README.md`
 
 ### 4️⃣ Feature Extraction
-**Create features** for classification and statistical analysis.
+**Create machine-learning ready features** for classification and statistical analysis.
 
 - **Input:** Preprocessed TT structure
 - **Output:** Feature table (amplitude, RMS, frequency content, entropy, correlation)
@@ -115,7 +115,7 @@ Choose which signal representation to use:
 | Basis | Description | Best For |
 |-------|-------------|----------|
 | **raw** | Unfiltered 10 kHz signals | Spectral analysis, LabChart parity |
-| **filtered** | Butterworth bandpass (5–500 Hz) | Envelope extraction, spasm detection |
+| **filtered** | Butterworth bandpass (20–450 Hz) | Envelope extraction, spasm detection |
 | **rectified** | Absolute value of filtered signal | Legacy compatibility |
 
 **Default:** `raw` (recommended for most applications)
@@ -210,7 +210,7 @@ New to EMG analysis? Here's where to start:
 ### Deep Dives by Analysis Type
 - **analysis/spasm_detection/README.md** – Spasm event detection algorithms
 - **analysis/frequency_analysis/README.md** – Band-power computation and LabChart parity
-- **analysis/feature_extraction/README.md** –  feature preparation
+- **analysis/feature_extraction/README.md** – Machine-learning feature preparation
 
 ### Implementation Details
 - **plotting/README.md** – Publication-ready visualization techniques
@@ -246,11 +246,11 @@ main
 → View 100–500 Hz band power and generate CSV
 ```
 
-### Workflow 4: Extract Features
+### Workflow 4: Extract ML Features
 ```matlab
 main
 → Select option 4 (Feature extraction)
-→ Get feature table ready for spasm identification
+→ Get feature table ready for machine learning
 → Export to CSV
 ```
 
