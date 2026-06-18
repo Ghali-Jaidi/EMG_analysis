@@ -1,118 +1,90 @@
 # Utilities Module
 
-Helper functions used across multiple analysis workflows.
+Low-level helpers used across the pipeline. The filtering and artifact-removal
+utilities now resolve their default arguments from the central config
+`config/default_emg_parameters.m`, so they behave consistently with the rest of
+the pipeline even when called directly.
 
 ## Functions
 
-### Activity & Mask Functions
+### Filtering
 
-#### `find_quiet_mask.m`
-Identifies periods of minimal EMG activity (muscle at rest).
+#### `butter_filter.m`
+Zero-phase band-pass Butterworth filter (`filtfilt`).
 
 **Usage:**
 ```matlab
-is_quiet = find_quiet_mask(signal, fs, threshold, min_duration);
+y = butter_filter(x);                 % defaults from config
+y = butter_filter(x, [20 450], 1000, 4);
+```
+**Defaults (from `default_emg_parameters`):** `fc = P.filter.bp_fc` (`[5 500]` Hz),
+`fs = P.fs` (10000), `order = P.filter.bp_order` (2; effective 4th order via `filtfilt`).
+
+#### `notch_filter.m`
+Power-line notch filter (`iirnotch`), fundamental only (no harmonics, to preserve EMG content).
+
+**Usage:**
+```matlab
+y = notch_filter(x);                  % defaults from config
+```
+**Defaults (from `default_emg_parameters`):** `f0 = P.filter.notch_f0` (50 Hz),
+`nyq = P.fs/2` (5000), `Q = P.filter.notch_Q` (30).
+
+### Activity & mask helpers
+
+#### `find_quiet_mask.m`
+Marks low-amplitude (quiet/rest) samples using a percentile sequence.
+```matlab
+[is_quiet, thresh] = find_quiet_mask(signal, P.thresholds, 'TA');
 ```
 
 #### `fuse_masks.m`
-Combines multiple activity masks (e.g., TA and MG) using logical operations.
-
-**Usage:**
+Merges runs in a single logical mask that are separated by a gap shorter than a
+given duration (in ms).
 ```matlab
-is_act_combined = fuse_masks(is_act_TA, is_act_MG, 'and');  % Both muscles active
-is_act_combined = fuse_masks(is_act_TA, is_act_MG, 'or');   % Either muscle active
+mask = fuse_masks(mask, fs, gap_ms);
 ```
 
 #### `keep_long_runs.m`
-Filters activity mask to keep only long contiguous active periods.
-
-**Usage:**
+Keeps only contiguous `true` runs at least `min_samples` long.
 ```matlab
-is_act_filtered = keep_long_runs(is_act, min_samples);
+mask = keep_long_runs(mask, min_samples);
 ```
 
-### Signal Processing Utilities
+### Signal processing
 
 #### `remove_artifacts.m`
-Detects and removes or interpolates spike artifacts (e.g., electrode motion, electrical noise).
+Flags rail/clipping artifacts relative to the typical active RMS and dilates the
+flagged regions.
 
 **Usage:**
 ```matlab
-signal_clean = remove_artifacts(signal, fs, threshold, method);
-% method: 'remove' (zero out) or 'interpolate' (smooth over)
+[TT_clean, TT_NaN, bad_seg] = remove_artifacts(TT, snrValue, fs, artifactP);
 ```
+**Defaults (from `default_emg_parameters`):** `fs = P.fs`, `artifactP = P.artifact`,
+i.e. the amplitude ceiling `rms_mult` (5000 × active RMS), the dilation window
+`dilate_win_ms` (30 ms), the padding `pad_ms` (25 ms) and the flagged-fraction
+threshold `frac_thresh` (0.2) are all sourced from the config instead of being
+hard-coded.
 
 #### `detect_valid_acquisition_start.m`
-Identifies the start of valid EMG recording (after instrument stabilization).
-
-**Usage:**
-```matlab
-t_start = detect_valid_acquisition_start(signal, fs, varargin);
-```
-
-### Signal Labeling & Analysis
-
-#### `ask_condition_and_intervals.m`
-Interactive UI for labeling recording conditions and time intervals.
-
-**Usage:**
-```matlab
-intervals = ask_condition_and_intervals(time_vector, signal);
-```
+Finds the start of valid recording (rejects pre-acquisition zeros/artifacts).
+Driven by the `P.acq.valid` knobs assembled in `preprocess_and_label`.
 
 #### `compute_spasm_threshold.m`
-Computes adaptive spasm detection threshold based on activity characteristics.
+Offline calibration of a spasm threshold from gait/spasm bursts.
 
-**Usage:**
+## Common usage pattern
+
 ```matlab
-threshold = compute_spasm_threshold(signal, is_active, method);
-% method: 'percentile', 'adaptive', 'statistical'
-```
-
-#### `compute_logical_ticks.m`
-Converts continuous time/sample indices into discrete logical arrays.
-
-**Usage:**
-```matlab
-is_event = compute_logical_ticks(sample_indices, total_samples);
-```
-
-### Display & Visualization Helpers
-
-#### `normalize_signal_for_display.m`
-Normalizes signals to [0, 1] or [-1, 1] range for consistent visualization.
-
-**Usage:**
-```matlab
-signal_norm = normalize_signal_for_display(signal, 'range', [0, 1]);
-```
-
-## Design Principles
-
-1. **Modularity**: Each function has a single, well-defined purpose
-2. **Reusability**: Functions accept flexible input formats (vectors, tables, structures)
-3. **Robustness**: Built-in checks for edge cases (empty arrays, NaNs, etc.)
-4. **Documentation**: Clear help sections and example usage
-
-## Common Usage Patterns
-
-**Activity detection workflow:**
-```matlab
-% 1. Compute SNR-based activity masks
-[is_act_TA, is_act_MG] = snr_emg(TA_rect, MG_rect, fs);
-
-% 2. Filter out brief artifacts
-is_act_TA = keep_long_runs(is_act_TA, ceil(0.2*fs));  % Keep only >200ms runs
-
-% 3. Combine masks
-is_act = fuse_masks(is_act_TA, is_act_MG, 'or');
-
-% 4. Remove spike artifacts from active regions
-TA_clean = remove_artifacts(TA_raw, fs, 5, 'interpolate');
+P  = default_emg_parameters();
+xf = notch_filter(butter_filter(x));            % both default from P
+env = filtfilt(ones(round(P.envWindowMs/1000*P.fs),1), 1, abs(xf));
+is_quiet = find_quiet_mask(env, P.thresholds, 'TA');
 ```
 
 ## Related Modules
 
-- **Core** (`core/`): Calls utilities during preprocessing
-- **Analysis** (`analysis/`): Uses masks and thresholds for feature extraction
-- **Plotting** (`plotting/`): Uses normalization for display
+- **Config** (`config/default_emg_parameters.m`): supplies every default used here
+- **Preprocessing** (`preprocessing/`): orchestrates these helpers in `preprocess_and_label`
+- **Detection** (`detection/`): reuses `fuse_masks` / `keep_long_runs` on spasm masks

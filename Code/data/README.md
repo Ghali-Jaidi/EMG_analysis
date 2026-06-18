@@ -126,5 +126,6 @@ load('data/TT_S001_Gait.mat', 'TT', 'opt');
 
 ## Related Modules
 
-- **Core** (`core/preprocess_and_label.m`): Reads data, generates TT structure
-- **Analysis** (`analysis/`): Reads TT structure, generates results
+- **Preprocessing** (`preprocessing/preprocess_and_label.m`): reads data, generates the `TT` timetable
+- **Config** (`config/default_emg_parameters.m`): parameters applied during preprocessing
+- **Detection / Analysis** (`detection/`, `analysis/`): read the `TT` structure, generate results

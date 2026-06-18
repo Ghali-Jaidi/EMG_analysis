@@ -31,20 +31,18 @@ The code is organized into logical modules for easy navigation:
 ```
 Code/
 ├── main.m                    ← START HERE! (Interactive menu)
-├── core/                     (Signal preprocessing)
-├── filters/                  (Filtering utilities)
-├── utilities/                (Helper functions)
-├── analysis/                 (High-level analysis workflows)
-│   ├── spasm_detection/
-│   ├── frequency_analysis/
-│   └── feature_extraction/
-├── plotting/                 (Visualization & figures)
-├── tests/                    (Validation & synthetic data)
-├── data/                     (Sample data)
-└── config/                   (Configuration & GUI)
+├── config/                   (default_emg_parameters.m — central config + GUI)
+├── preprocessing/            (preprocess_and_label, snr_emg)
+├── utilities/                (filters, masks, artifact removal)
+├── detection/                (spasm classification & stim ON/OFF analysis)
+├── analysis/                 (frequency / spectral workflows)
+├── visualization/            (plotting & figures)
+├── tests/                    (validation & synthetic data)
+└── data/                     (sample data)
 ```
 
-**See `ARCHITECTURE.md`** for a detailed dependency diagram and data flow explanation.
+Every tunable value lives in **`config/default_emg_parameters.m`** — see
+`config/README.md` for the full, grouped parameter reference.
 
 ---
 
@@ -60,19 +58,19 @@ Code/
   - Applies filtering (bandpass, notch) and removes artifacts
   - Detects activity periods using SNR-based masks
   - Computes smoothed envelopes for event detection
-- **See:** `core/README.md`
+- **See:** `preprocessing/README.md`
 
 ### 2️⃣ Spasm Detection
 **Find involuntary muscle contractions** using envelope-based analysis.
 
 - **Input:** Preprocessed TT structure
-- **Output:** Spasm event masks, statistics (rate, duration, amplitude)
+- **Output:** Spasm/Active/Rest/Other state masks, per-state ON/OFF amplitude statistics
 - **What it does:**
-  - Computes adaptive thresholds (percentile-based)
+  - Computes adaptive thresholds (percentile-based, defaults from `P.spasm`)
   - Detects high-amplitude bursts in muscle activity
-  - Classifies spasms as stimulus-evoked or spontaneous
-  - Generates statistical comparisons
-- **See:** `analysis/spasm_detection/README.md`
+  - Splits each state by Ch3 stimulation ON/OFF and runs a Wilcoxon signed-rank test
+  - Generates an annotated comparison figure
+- **See:** `detection/README.md`
 
 ### 3️⃣ Frequency Analysis
 **Analyze spectral properties** of EMG signals.
@@ -84,19 +82,18 @@ Code/
   - Integrates power within frequency bands
   - Validates offline analysis against real-time LabChart
   - Generates histograms and comparison plots
-- **See:** `analysis/frequency_analysis/README.md`
+- **See:** `analysis/README.md`
 
-### 4️⃣ Feature Extraction
-**Create machine-learning ready features** for classification and statistical analysis.
+### 4️⃣ Group Comparison
+**Compare across recordings** (injured vs uninjured, stim ON vs OFF).
 
-- **Input:** Preprocessed TT structure
-- **Output:** Feature table (amplitude, RMS, frequency content, entropy, correlation)
+- **Input:** Multiple preprocessed recordings (selected interactively)
+- **Output:** Group comparison figures and summary statistics
 - **What it does:**
-  - Computes time-domain features (mean, std, kurtosis, RMS)
-  - Computes frequency-domain features (band powers, spectral centroid)
-  - Computes statistical features (entropy, ApEn, SampEn)
-  - Cross-channel correlation analysis
-- **See:** `analysis/feature_extraction/README.md`
+  - Aggregates amplitude/SNR metrics across recordings
+  - Compares groups and stimulation conditions
+  - Exports comparison figures (`group_comparison.pdf`, `overall_stim_comparison.pdf`)
+- **Run via:** `main` → option 4 (`Feature_Extraction`)
 
 ---
 
@@ -109,28 +106,34 @@ This pipeline analyzes:
 
 Both are recorded simultaneously at **10 kHz sampling rate**.
 
-### Signal Basis Options
-Choose which signal representation to use:
-
-| Basis | Description | Best For |
-|-------|-------------|----------|
-| **raw** | Unfiltered 10 kHz signals | Spectral analysis, LabChart parity |
-| **filtered** | Butterworth bandpass (20–450 Hz) | Envelope extraction, spasm detection |
-| **rectified** | Absolute value of filtered signal | Legacy compatibility |
-
-**Default:** `raw` (recommended for most applications)
-
-### Key Parameters
-All configurable in `core/default_emg_parameters.m`:
+### Centralized Parameters
+**All tunable values live in one place: `config/default_emg_parameters.m`.**
+It returns a struct `P` whose fields are grouped by pipeline stage. Every
+function that used to hard-code these numbers now reads them from here (directly
+or through its default arguments), so the whole pipeline can be reconfigured
+from this single file.
 
 ```matlab
-opt.fs = 10000;                    % Sampling frequency (Hz)
-opt.SignalBasis = 'raw';           % Signal representation
-opt.BandpassFreq = [20, 450];      % Filter frequency range
-opt.SpasmPrcTA = 75;               % Spasm detection threshold (percentile)
-opt.MinSpasmDuration = 0.2;        % Minimum spasm length (seconds)
-opt.AnalysisWindowLength = 0.1;    % FFT window (100 ms)
+P = default_emg_parameters();
+
+P.fs                 % 10000   sampling frequency (Hz)
+P.filter.bp_fc       % [5 500] band-pass cutoffs (Hz)
+P.filter.notch_f0    % 50      power-line notch frequency (Hz)
+P.envWindowMs        % 3       envelope moving-average window (ms)
+P.act_prc            % 70      TA activity-detection percentile
+P.artifact.rms_mult  % 5000    artifact ceiling (× active RMS)
+P.spasm.prc_TA       % 65      spasm threshold percentile (TA)
+P.spasm.min_dur_s    % 0.1     minimum spasm duration (s)
 ```
+
+To customise a run, override fields on the returned struct and pass it along:
+```matlab
+P = default_emg_parameters();
+P.spasm.prc_TA = 70;
+[TT, snr] = preprocess_and_label(P, P.fs);
+```
+
+See **`config/README.md`** for the complete grouped reference.
 
 ---
 
@@ -144,16 +147,15 @@ cd Code/
 main
 ```
 
-You'll see 9 menu options:
-1. Preprocess a single file
-2. Detect spasms
-3. Analyze frequency content
-4. Extract features
-5. Batch process multiple files
-6. Tune parameters
-7. Run validation tests
-8. Launch GUI interface
-9. View help documentation
+You'll see the menu options:
+1. Preprocess single recording file
+2. Spasm detection & analysis
+3. Frequency analysis (spectral features)
+4. Cross-recording group analyses
+5. Run validation tests
+6. Launch GUI interface
+7. Display help & documentation
+0. Exit
 
 ### For Command-Line Users
 
@@ -164,17 +166,17 @@ Once you've explored via the menu, you can call functions directly:
 cd Code/
 main  % This auto-adds all folders to MATLAB path
 
-% Preprocess a file
-TT = preprocess_and_label('myfile.csv', 'SignalBasis', 'raw');
+% Build the parameter struct (single source of truth)
+P = default_emg_parameters();
 
-% Detect spasms
-results = spasm_gait_stim_analysis(TT, snrValue, fs);
+% Preprocess a recording
+[TT, snrValue] = preprocess_and_label(P, P.fs, 'fullFile', 'myfile.mat', 'recID', 1);
 
-% Analyze frequency content
-plot_spectral_comparison_advanced(TT, 'Gait');
+% Detect spasms (thresholds default to P.spasm.*)
+results = spasm_gait_stim_analysis(TT, snrValue, P.fs, 'PlotResult', true);
 
-% Extract features
-features = Feature_Extraction(TT);
+% Group comparisons
+out = Feature_Extraction();
 ```
 
 ### For Batch Processing
@@ -185,10 +187,11 @@ Process multiple files automatically:
 cd Code/
 main  % Sets up paths
 
-files = {'file1.csv', 'file2.csv', 'file3.csv'};
+P = default_emg_parameters();
+files = {'file1.mat', 'file2.mat', 'file3.mat'};
 for i = 1:length(files)
-    TT = preprocess_and_label(files{i}, 'SignalBasis', 'raw');
-    results = labchart_protocol_check_gait_vs_spasm(TT, [], TT.fs);
+    [TT, snrValue] = preprocess_and_label(P, P.fs, 'fullFile', files{i}, 'recID', 1);
+    results = labchart_protocol_check_gait_vs_spasm(TT, [], P.fs);
 end
 ```
 
@@ -203,20 +206,18 @@ New to EMG analysis? Here's where to start:
 - **REORGANIZATION_SUMMARY.md** – Overview of the new folder structure
 
 ### Understanding the Concepts
-- **core/README.md** – Learn about signal preprocessing and signal basis options
-- **filters/README.md** – Understand filtering approaches
-- **utilities/README.md** – Explore helper functions
+- **config/README.md** – The central parameter reference (`default_emg_parameters`)
+- **preprocessing/README.md** – Signal preprocessing, envelope and SNR/activity masks
+- **utilities/README.md** – Filtering, masking and artifact-removal helpers
 
 ### Deep Dives by Analysis Type
-- **analysis/spasm_detection/README.md** – Spasm event detection algorithms
-- **analysis/frequency_analysis/README.md** – Band-power computation and LabChart parity
-- **analysis/feature_extraction/README.md** – Machine-learning feature preparation
+- **detection/README.md** – Spasm classification and stim ON/OFF analysis
+- **analysis/README.md** – Band-power computation and LabChart parity
 
 ### Implementation Details
-- **plotting/README.md** – Publication-ready visualization techniques
+- **visualization/README.md** – Plotting and figure conventions
 - **tests/README.md** – Validation workflows and synthetic data generation
 - **data/README.md** – Data formats and naming conventions
-- **ARCHITECTURE.md** – System design and module dependencies
 
 ---
 
@@ -246,20 +247,12 @@ main
 → View 100–500 Hz band power and generate CSV
 ```
 
-### Workflow 4: Extract ML Features
+### Workflow 4: Cross-Recording Group Comparison
 ```matlab
 main
-→ Select option 4 (Feature extraction)
-→ Get feature table ready for machine learning
-→ Export to CSV
-```
-
-### Workflow 5: Process Multiple Files
-```matlab
-main
-→ Select option 5 (Batch processing)
-→ Select multiple CSV files
-→ Automatic processing and summary statistics
+→ Select option 4 (Cross-recording group analyses)
+→ Select multiple recordings
+→ Group comparison (injured vs uninjured, stim ON vs OFF) and figures
 ```
 
 ---
@@ -269,7 +262,7 @@ main
 This pipeline is built on best practices for reproducible EMG analysis:
 
 ✅ **Modular Design** – Separate preprocessing, analysis, and visualization for reusability  
-✅ **Configurable** – All parameters in one central file (`core/default_emg_parameters.m`)  
+✅ **Configurable** – All parameters in one central file (`config/default_emg_parameters.m`)  
 ✅ **Robust** – Handles artifacts, baseline drift, and variable signal quality  
 ✅ **Transparent** – Clear documentation of all algorithms and design choices  
 ✅ **Validated** – Synthetic data generation and parameter tuning tools included  
@@ -291,12 +284,12 @@ This pipeline is built on best practices for reproducible EMG analysis:
 |---------|----------|
 | "Undefined function" error | Make sure you ran `main` first (it adds all paths) |
 | CSV file won't load | Check format: must have Time, TA, MG columns |
-| Spasm detection too sensitive | Use `main` → option 6 to tune percentile threshold |
-| Spectral analysis looks noisy | Try 'filtered' signal basis instead of 'raw' |
+| Spasm detection too sensitive | Raise `P.spasm.prc_TA` / `P.spasm.prc_MG` in `config/default_emg_parameters.m` (or enter a higher percentile at the prompt) |
+| Too many / too few active samples | Adjust `P.act_prc` / `P.act_prc_MG` in the config |
 | GUI doesn't launch | Ensure `interface.mlapp` exists in `config/` folder |
 | Out of memory with large files | Use batch processing to split into smaller chunks |
 
-For more help, see the **Help** section in the `main` menu (option 9).
+For more help, see the **Help** section in the `main` menu (option 7).
 
 ---
 
@@ -346,8 +339,8 @@ If you use this pipeline in your research, please cite:
 Found a bug? Have a suggestion? Contributions are welcome!
 
 Please follow the established naming conventions:
-- Analysis functions: `analysis/*/function_name.m`
-- Plotting functions: `plotting/plot_description.m`
+- Analysis functions: `analysis/function_name.m`
+- Plotting functions: `visualization/plot_description.m`
 - Utility functions: `utilities/utility_name.m`
 - Tests: `tests/test_feature.m`
 

@@ -160,8 +160,13 @@ assert(all(abs(results{1}.spasm_rate - results{2}.spasm_rate) < 0.1), ...
 4. **Validate against known values** – Compare band powers to hand calculations when possible
 5. **Profile performance** – Run `profile` on slow workflows to identify bottlenecks
 
+> Tests build their parameter struct with `default_emg_parameters()` and pass it
+> to `preprocess_and_label`, so they exercise the same centralized config the
+> rest of the pipeline uses.
+
 ## Related Modules
 
-- **Core** (`core/`): Tests preprocessing functions
-- **Analysis** (`analysis/`): Tests detection/classification workflows
-- **Data** (`data/`): Contains synthetic_rec.mat for quick testing
+- **Config** (`config/default_emg_parameters.m`): parameters used by the tested pipeline
+- **Preprocessing** (`preprocessing/`): tested preprocessing functions
+- **Detection** (`detection/`): tested detection/classification workflows
+- **Data** (`data/`): contains synthetic_rec.mat for quick testing

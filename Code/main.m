@@ -14,11 +14,11 @@ function main
 % Setup: Add all subfolders to MATLAB path
 % =========================================================================
 current_dir = fileparts(mfilename('fullpath'));
-addpath(genpath(fullfile(current_dir, 'core')));
-addpath(genpath(fullfile(current_dir, 'filters')));
-addpath(genpath(fullfile(current_dir, 'utilities')));
+addpath(genpath(fullfile(current_dir, 'preprocessing')));
+addpath(genpath(fullfile(current_dir, 'detection')));
 addpath(genpath(fullfile(current_dir, 'analysis')));
-addpath(genpath(fullfile(current_dir, 'plotting')));
+addpath(genpath(fullfile(current_dir, 'visualization')));
+addpath(genpath(fullfile(current_dir, 'utilities')));
 addpath(genpath(fullfile(current_dir, 'tests')));
 addpath(genpath(fullfile(current_dir, 'data')));
 addpath(genpath(fullfile(current_dir, 'config')));
@@ -163,22 +163,25 @@ function run_spasm_detection_menu()
     % Load or preprocess
     [TT, snrValue, success] = load_or_preprocess();
     if ~success, return; end
-    
+
+    % Defaults sourced from the central config
+    P = default_emg_parameters();
+
     % Get spasm detection percentile thresholds
     fprintf('\nSpasm detection uses percentile thresholds of active amplitudes.\n');
     fprintf('Higher percentile = stricter spasm detection (fewer events detected).\n');
-    fprintf('\nEnter spasm percentile for TA (default 65): ');
+    fprintf('\nEnter spasm percentile for TA (default %g): ', P.spasm.prc_TA);
     ta_input = input('', 's');
     if isempty(ta_input)
-        spasm_prc_ta = 65;
+        spasm_prc_ta = P.spasm.prc_TA;
     else
         spasm_prc_ta = str2double(ta_input);
     end
-    
-    fprintf('Enter spasm percentile for MG (default 65): ');
+
+    fprintf('Enter spasm percentile for MG (default %g): ', P.spasm.prc_MG);
     mg_input = input('', 's');
     if isempty(mg_input)
-        spasm_prc_mg = 65;
+        spasm_prc_mg = P.spasm.prc_MG;
     else
         spasm_prc_mg = str2double(mg_input);
     end
@@ -189,10 +192,10 @@ function run_spasm_detection_menu()
     fprintf('2. Stimulated vs unstimulated spasms (matched-window amplitude)\n');
     fprintf('3. TA-MG correlation\n');
     choice = input('Choice (1-3): ', 's');
-    
-    % Sampling frequency (fixed at 10 kHz)
-    fs = 10000;
-    
+
+    % Sampling frequency (from central config)
+    fs = P.fs;
+
     switch choice
         case '1'
             fprintf('\nRunning state-stratified amplitude analysis... ');
@@ -511,45 +514,71 @@ function display_help_menu()
     fprintf('\n--- HELP & DOCUMENTATION ---\n');
     fprintf('Select topic:\n');
     fprintf('1. Project overview\n');
-    fprintf('2. Signal basis explanation\n');
-    fprintf('3. Spasm detection algorithm\n');
-    fprintf('4. Frequency analysis methods\n');
-    fprintf('5. Data format specifications\n');
-    fprintf('6. Common workflows\n');
-    fprintf('7. Troubleshooting\n');
-    choice = input('Choice (1-7): ', 's');
-    
+    fprintf('2. Parameters & configuration\n');
+    fprintf('3. Preprocessing pipeline\n');
+    fprintf('4. Spasm detection algorithm\n');
+    fprintf('5. Frequency analysis methods\n');
+    fprintf('6. Data format specifications\n');
+    fprintf('7. Common workflows\n');
+    fprintf('8. Troubleshooting\n');
+    choice = input('Choice (1-8): ', 's');
+
     switch choice
         case '1'
             fprintf('\n=== PROJECT OVERVIEW ===\n');
             fprintf('This EMG analysis pipeline provides integrated workflows for:\n');
-            fprintf('  • Signal preprocessing (filtering, envelope computation)\n');
-            fprintf('  • Spasm detection and characterization\n');
+            fprintf('  • Signal preprocessing (filtering, envelope, SNR/activity masks)\n');
+            fprintf('  • Spasm detection and stim (Ch3) ON/OFF characterization\n');
             fprintf('  • Frequency-domain analysis (spectral features)\n');
             fprintf('  • Group-level comparisons (injured/uninjured, stim ON/OFF)\n');
             fprintf('  • Publication-quality visualizations\n');
-            fprintf('\nFor detailed information, see README.md in project root.\n');
-            
+            fprintf('\nFor detailed information, see README.md in the project root.\n');
+
         case '2'
-            fprintf('\n=== SIGNAL BASIS EXPLANATION ===\n');
-            fprintf('The preprocess_and_label function uses parameters from default_emg_parameters().\n');
-            fprintf('To customize preprocessing:\n');
-            fprintf('  1. Edit core/default_emg_parameters.m to change default settings\n');
-            fprintf('  2. Or pass modified parameters directly to preprocess_and_label\n');
-            
+            fprintf('\n=== PARAMETERS & CONFIGURATION ===\n');
+            fprintf('All tunable values live in one place: config/default_emg_parameters.m\n');
+            fprintf('It returns a struct P grouped by pipeline stage, e.g.:\n');
+            fprintf('  P.fs               sampling frequency (10000 Hz)\n');
+            fprintf('  P.filter.bp_fc     band-pass cutoffs [5 500] Hz\n');
+            fprintf('  P.filter.notch_f0  power-line notch (50 Hz)\n');
+            fprintf('  P.envWindowMs      envelope moving-average window (3 ms)\n');
+            fprintf('  P.act_prc          TA activity-detection percentile (70)\n');
+            fprintf('  P.spasm.prc_TA     spasm threshold percentile (65)\n');
+            fprintf('  P.artifact.rms_mult artifact ceiling (x active RMS)\n');
+            fprintf('Every function reads its defaults from here (directly or via its\n');
+            fprintf('default arguments). To customize:\n');
+            fprintf('  1. Edit config/default_emg_parameters.m to change defaults globally, or\n');
+            fprintf('  2. P = default_emg_parameters(); P.spasm.prc_TA = 70;\n');
+            fprintf('     [TT, snr] = preprocess_and_label(P, P.fs);\n');
+            fprintf('\nFor details, see: config/README.md\n');
+
         case '3'
-            fprintf('\n=== SPASM DETECTION ALGORITHM ===\n');
-            fprintf('Current method: Envelope percentile thresholding\n');
-            fprintf('Steps:\n');
-            fprintf('  1. Filter signal (20-450 Hz bandpass)\n');
-            fprintf('  2. Rectify: |filtered_signal|\n');
-            fprintf('  3. Smooth envelope: gaussian window (50 ms)\n');
-            fprintf('  4. Compute threshold: percentile(envelope, 75th percentile)\n');
-            fprintf('  5. Detect spasms: envelope > threshold\n');
-            fprintf('  6. Filter bursts: keep only >200 ms events\n');
-            fprintf('\nFor details, see: analysis/spasm_detection/README.md\n');
-            
+            fprintf('\n=== PREPROCESSING PIPELINE ===\n');
+            fprintf('preprocess_and_label(P, fs) does, in order:\n');
+            fprintf('  1. Load recording from .mat (data__chan_{1,2,3}_rec_{N})\n');
+            fprintf('  2. Filter: notch_filter(butter_filter(.)) using P.filter / P.fs\n');
+            fprintf('  3. Rectify (abs) + envelope (moving average of width P.envWindowMs)\n');
+            fprintf('  4. (optional) detect valid acquisition start (P.detect_acq_start)\n');
+            fprintf('  5. Quiet/rest masks via find_quiet_mask (P.thresholds)\n');
+            fprintf('  6. SNR + activity masks via snr_emg (P.snr_win_ms, P.act_prc, P.act_prc_MG)\n');
+            fprintf('  7. Artifact removal via remove_artifacts (P.artifact)\n');
+            fprintf('  8. Final rest/activity masks, gaps fused with P.fuse_gap_ms\n');
+            fprintf('\nFor details, see: preprocessing/README.md\n');
+
         case '4'
+            fprintf('\n=== SPASM DETECTION ALGORITHM ===\n');
+            fprintf('Method: envelope percentile thresholding (spasm_gait_stim_analysis).\n');
+            fprintf('Defaults from config/default_emg_parameters.m (P.spasm); steps:\n');
+            fprintf('  1. Filter (band-pass P.filter.bp_fc, default [5 500] Hz) + 50 Hz notch\n');
+            fprintf('  2. Rectify: |filtered_signal|\n');
+            fprintf('  3. Envelope: moving average (P.envWindowMs, default 3 ms)\n');
+            fprintf('  4. Threshold: prctile(env(is_active), P.spasm.prc_TA/prc_MG)  [default 65]\n');
+            fprintf('  5. Detect spasm: TA or MG envelope >= its threshold\n');
+            fprintf('  6. Keep bursts >= P.spasm.min_dur_s (0.1 s), fuse gaps <= P.spasm.fuse_gap_ms (50 ms)\n');
+            fprintf('  7. Classify Spasm/Active/Rest/Other, split by Ch3 ON/OFF, Wilcoxon signed-rank\n');
+            fprintf('\nFor details, see: detection/README.md\n');
+
+        case '5'
             fprintf('\n=== FREQUENCY ANALYSIS METHODS ===\n');
             fprintf('Two complementary methods:\n');
             fprintf('  PSD-integrated (Welch):\n');
@@ -557,42 +586,44 @@ function display_help_menu()
             fprintf('    • Window: Hann periodic\n');
             fprintf('    • Overlap: none (zero overlap)\n');
             fprintf('    • Band power: sum(Pxx) × df  [V^2 units]\n');
-            fprintf('  Time-domain (causal bandpass):\n');
-            fprintf('    • Butterworth bandpass (order 4)\n');
+            fprintf('  Time-domain (Butterworth bandpass):\n');
+            fprintf('    • butter_filter(x, fc, fs, order), zero-phase via filtfilt\n');
             fprintf('    • Mean-square power: mean(filtered_signal^2)  [V^2 units]\n');
             fprintf('\nBoth methods should agree closely (within ~10%%).\n');
-            fprintf('For details, see: analysis/frequency_analysis/README.md\n');
-            
-        case '5'
-            fprintf('\n=== DATA FORMAT SPECIFICATIONS ===\n');
-            fprintf('Input: CSV files from LabChart with columns:\n');
-            fprintf('  Time(s), TA(V), MG(V), Stim(V), [optional columns]\n');
-            fprintf('  Sampling: 10 kHz (100 µs intervals)\n');
-            fprintf('\nOutput: MATLAB MAT files and CSV result tables\n');
-            fprintf('  TT struct: preprocessed signals with metadata\n');
-            fprintf('  Results: band powers, spasm rates, statistics\n');
-            fprintf('\nFor details, see: data/README.md\n');
-            
+            fprintf('For details, see: analysis/README.md\n');
+
         case '6'
-            fprintf('\n=== COMMON WORKFLOWS ===\n');
-            fprintf('Workflow 1: Quick analysis of single file\n');
-            fprintf('  main > 1 > select file > 2 > 1 > results\n');
-            fprintf('\nWorkflow 2: Parameter optimization\n');
-            fprintf('  main > 1 > preprocess > 5 > 1 > optimal threshold\n');
-            fprintf('\nWorkflow 3: Interactive GUI\n');
-            fprintf('  main > 7 > launch interface.mlapp\n');
-            
+            fprintf('\n=== DATA FORMAT SPECIFICATIONS ===\n');
+            fprintf('Input: MATLAB .mat file with per-channel, per-recording variables:\n');
+            fprintf('  data__chan_1_rec_N (TA), data__chan_2_rec_N (MG), data__chan_3_rec_N (Ch3/stim)\n');
+            fprintf('  Sampling: 10 kHz (100 us intervals)\n');
+            fprintf('  (LabChart exports are converted to this .mat layout beforehand)\n');
+            fprintf('\nOutput: TT timetable (TA/MG raw, filtered, rectified, envelope) +\n');
+            fprintf('  snrValue masks, plus CSV/figure result files per analysis.\n');
+            fprintf('\nFor details, see: data/README.md\n');
+
         case '7'
+            fprintf('\n=== COMMON WORKFLOWS ===\n');
+            fprintf('Workflow 1: Preprocess + spasm analysis of one recording\n');
+            fprintf('  main > 1 (preprocess) > then main > 2 > 1 (state-stratified analysis)\n');
+            fprintf('\nWorkflow 2: Frequency analysis\n');
+            fprintf('  main > 3 > choose method\n');
+            fprintf('\nWorkflow 3: Cross-recording group comparison\n');
+            fprintf('  main > 4 (Feature_Extraction, selects multiple recordings)\n');
+            fprintf('\nWorkflow 4: Interactive GUI\n');
+            fprintf('  main > 6 > launch interface\n');
+
+        case '8'
             fprintf('\n=== TROUBLESHOOTING ===\n');
             fprintf('Problem: "Undefined function" errors\n');
-            fprintf('  Solution: Ensure you ran main.m (adds paths)\n');
-            fprintf('\nProblem: CSV file not loading\n');
-            fprintf('  Solution: Check format (LabChart CSV with Time, TA, MG columns)\n');
+            fprintf('  Solution: Ensure you ran main.m (it adds all paths)\n');
+            fprintf('\nProblem: .mat file not loading / no recordings found\n');
+            fprintf('  Solution: File must contain data__chan_1_rec_N, _chan_2_, _chan_3_ variables\n');
             fprintf('\nProblem: Spasm detection finding too many/few events\n');
-            fprintf('  Solution: Use parameter tuning (main > 5) to adjust percentile\n');
-            fprintf('\nProblem: Spectral analysis looks noisy\n');
-            fprintf('  Solution: Use ''filtered'' signal basis (main > 1)\n');
-            fprintf('\nFor additional help, see README.md files in each folder.\n');
+            fprintf('  Solution: Raise/lower P.spasm.prc_TA/prc_MG in config (or at the prompt)\n');
+            fprintf('\nProblem: Too many/few active samples\n');
+            fprintf('  Solution: Adjust P.act_prc / P.act_prc_MG in config/default_emg_parameters.m\n');
+            fprintf('\nFor additional help, see the README.md files in each folder.\n');
     end
 end
 

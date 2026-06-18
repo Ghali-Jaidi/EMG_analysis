@@ -1,4 +1,4 @@
-function [TT_clean, TT_NaN, bad_seg] = remove_artifacts(TT, snrValue, fs)
+function [TT_clean, TT_NaN, bad_seg] = remove_artifacts(TT, snrValue, fs, artifactP)
 % remove_artifacts - Removes artifacts from EMG timetable
 %
 % Inputs:
@@ -14,12 +14,13 @@ function [TT_clean, TT_NaN, bad_seg] = remove_artifacts(TT, snrValue, fs)
 arguments
     TT timetable
     snrValue struct
-    fs (1,1) double {mustBePositive} = 10000
+    fs (1,1) double {mustBePositive} = default_emg_parameters().fs
+    artifactP (1,1) struct = default_emg_parameters().artifact
 end
 
-% Artifact thresholds: 10x the typical active RMS per channel
-artifact_thr_TA = snrValue.Ract_TA * 5000;
-artifact_thr_MG = snrValue.Ract_MG * 5000;
+% Artifact thresholds: rms_mult x the typical active RMS per channel
+artifact_thr_TA = snrValue.Ract_TA * artifactP.rms_mult;
+artifact_thr_MG = snrValue.Ract_MG * artifactP.rms_mult;
 
 fprintf('Artifact thresholds  ->  TA: %.4f   MG: %.4f\n', ...
     artifact_thr_TA, artifact_thr_MG);
@@ -33,9 +34,9 @@ bad_jump_MG = abs(diff([0; TT.MG_rect])) > artifact_thr_MG;
 bad1 = bad1 | bad_jump_TA | bad_jump_MG;
 
 % Dilate bad regions to catch transition edges
-win      = round(0.03*fs);
-pad      = round(0.025*fs);
-bad_win1 = movmean(double(bad1), win) > 0.2;
+win      = round((artifactP.dilate_win_ms/1000)*fs);
+pad      = round((artifactP.pad_ms/1000)*fs);
+bad_win1 = movmean(double(bad1), win) > artifactP.frac_thresh;
 bad_seg  = logical(conv(double(bad_win1), ones(pad,1), 'same') > 0);
 
 x = bad_seg(:);
