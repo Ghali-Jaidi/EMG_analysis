@@ -139,7 +139,9 @@ function [TT, snrValue] = run_single_file_preprocessing()
         if isempty(save_choice) || lower(save_choice) == 'y'
             [save_name, save_path] = uiputfile('*.mat', 'Save as', 'TT_preprocessed.mat');
             if ~isequal(save_name, 0)
-                save(fullfile(save_path, save_name), 'TT', '-v7.3');
+                % Save snrValue alongside TT: the spasm/stim analyses need its
+                % activity and rest masks. Saving only TT would force a re-run.
+                save(fullfile(save_path, save_name), 'TT', 'snrValue', '-v7.3');
                 fprintf('Saved to: %s\n', fullfile(save_path, save_name));
             end
         end
@@ -196,6 +198,16 @@ function run_spasm_detection_menu()
     % Sampling frequency (from central config)
     fs = P.fs;
 
+    % Analyses 1 and 2 need the activity/rest masks carried in snrValue.
+    % A TT-only loaded file (legacy save) does not have them.
+    if ismember(choice, {'1','2'}) && ...
+            (isempty(snrValue) || ~isstruct(snrValue) || ~isfield(snrValue, 'is_act'))
+        fprintf(['\nThis analysis needs snrValue (activity/rest masks), which is\n' ...
+                 'missing from the loaded data. Re-run preprocessing (main > 1, or\n' ...
+                 'option 2 here) so snrValue is regenerated and saved alongside TT.\n']);
+        return;
+    end
+
     switch choice
         case '1'
             fprintf('\nRunning state-stratified amplitude analysis... ');
@@ -227,15 +239,15 @@ function run_spasm_detection_menu()
             % Uses same SpasmPrcTA / SpasmPrcMG as case 1. Ask once for the
             % amplitude percentile used to summarise each matched window
             % (the function's other knobs keep their defaults).
-            fprintf('\nEnter amplitude percentile for per-window summary (default 90): ');
+            fprintf('\nEnter amplitude percentile for per-window summary (default 100): ');
             amp_input = input('', 's');
             if isempty(amp_input)
-                amp_prc = 90;
+                amp_prc = 100;
             else
                 amp_prc = str2double(amp_input);
                 if isnan(amp_prc) || amp_prc <= 0 || amp_prc > 100
-                    fprintf('Invalid percentile, falling back to 90.\n');
-                    amp_prc = 90;
+                    fprintf('Invalid percentile, falling back to 100.\n');
+                    amp_prc = 100;
                 end
             end
             
@@ -329,15 +341,28 @@ function run_frequency_analysis_menu()
             end
             return;
     end
-          
-    
-    % For cases 1 and 3, load or preprocess data
+
+    % Batch spectral analysis handles its own gait/spasm pair selection and
+    % preprocessing, so it must not go through load_or_preprocess first.
+    if strcmp(choice, '3')
+        fprintf('\nRunning batch spectral analysis (multiple gait/spasm pairs)...\n');
+        try
+            batch_spectral_analysis();
+            fprintf('Batch spectral analysis complete.\n');
+        catch ME
+            fprintf('Error: %s\n', ME.message);
+        end
+        return;
+    end
+
+
+    % For case 1, load or preprocess data
     [TT, snrValue, success] = load_or_preprocess();
     if ~success, return; end
-    
+
     % Sampling frequency (fixed at 10 kHz)
     fs = 10000;
-    
+
     switch choice
         case '1'
             fprintf('\nRunning LabChart protocol validation... ');
@@ -348,12 +373,6 @@ function run_frequency_analysis_menu()
             catch ME
                 fprintf('Error: %s\n', ME.message);
             end
-            
-       
-            
-        case '3'
-            fprintf('\nBatch spectral analysis not yet implemented in menu.\n');
-            fprintf('Use: batch_spectral_analysis(file_list, conditions)\n');
     end
 end
 
@@ -670,12 +689,23 @@ function [TT, snrValue, success] = load_or_preprocess()
             [filename, filepath] = uigetfile('*.mat', 'Load preprocessed data');
             if ~isequal(filename, 0)
                 try
-                    load(fullfile(filepath, filename), 'TT', 'snrValue');
+                    % Only request snrValue if the file actually contains it,
+                    % so a legacy TT-only file does not trigger a load warning.
+                    vars = who('-file', fullfile(filepath, filename));
+                    if ismember('snrValue', vars)
+                        load(fullfile(filepath, filename), 'TT', 'snrValue');
+                    else
+                        load(fullfile(filepath, filename), 'TT');
+                    end
                     fprintf('\nLoaded: %s\n', filename);
                     fprintf('TT structure contains %d samples at 10 kHz.\n', height(TT));
                     assignin('caller', 'TT', TT);
                     if ~isempty(snrValue)
                         assignin('caller', 'snrValue', snrValue);
+                    else
+                        fprintf(['\nNote: this file has no snrValue (activity/rest masks).\n' ...
+                                 '      TA-MG correlation will still work, but the spasm/stim\n' ...
+                                 '      analyses need it - re-preprocess (option 2) to regenerate.\n']);
                     end
                     success = true;
                     return;

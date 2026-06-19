@@ -26,7 +26,7 @@ function out = compare_spasm_stim_vs_nostim(TT, snr, fs, varargin)
 %   'FuseGapMs'     : gap in ms within which adjacent spasms are fused (default 50)
 %   'Ch3Threshold'  : manual Ch3 ON threshold — auto if empty
 %   'Ch3MinOnMs'    : minimum Ch3 ON duration in ms (default 100)
-%   'AmpPercentile' : percentile used to summarise amplitude within each window (default 90)
+%   'AmpPercentile' : percentile used to summarise amplitude within each window (default 100 = peak)
 %   'MinWindowS'    : minimum window duration in seconds to include a comparison (default 0.05)
 %   'PlotResult'    : produce summary figure (default true)
 
@@ -40,7 +40,7 @@ p.addParameter('SpasmMinDurS',  0.1,   @(x) isnumeric(x) && isscalar(x));
 p.addParameter('FuseGapMs',     50,    @(x) isnumeric(x) && isscalar(x));
 p.addParameter('Ch3Threshold',  [],    @(x) isempty(x) || (isnumeric(x) && isscalar(x)));
 p.addParameter('Ch3MinOnMs',    100,   @(x) isnumeric(x) && isscalar(x));
-p.addParameter('AmpPercentile', 90,    @(x) isnumeric(x) && isscalar(x));
+p.addParameter('AmpPercentile', 100,   @(x) isnumeric(x) && isscalar(x));
 p.addParameter('MinWindowS',    0.05,  @(x) isnumeric(x) && isscalar(x));
 p.addParameter('PlotResult',    true,  @(x) islogical(x) && isscalar(x));
 p.parse(varargin{:});
@@ -73,7 +73,7 @@ is_spasm_raw(~isfinite(TA_env) & ~isfinite(MG_env)) = false;
 
 min_spasm_smp = max(1, round(opt.SpasmMinDurS * fs));
 is_spasm = keep_long_runs(is_spasm_raw, min_spasm_smp);
-is_spasm = fuse_masks(is_spasm, fs, opt.FuseGapMs * 10);
+is_spasm = fuse_masks(is_spasm, fs, opt.FuseGapMs);
 
 % Enumerate spasm bouts
 d_sp       = diff([false; is_spasm; false]);
@@ -178,6 +178,7 @@ stim_off_s   = nan(n_stim, 1);
 stim_dur_s   = nan(n_stim, 1);
 stim_sp_idx  = nan(n_stim, 1);
 
+stim_win_valid = false(n_stim, 1);   % window passed the min-length check
 for ki = 1:n_stim
     k   = stim_idx(ki);
     i0  = sp_starts(k) + win_offset(k);
@@ -191,8 +192,18 @@ for ki = 1:n_stim
     end
 
     idx_win = i0:i1;
-    stim_amp_TA(ki) = prctile(TA_env(idx_win), opt.AmpPercentile);
-    stim_amp_MG(ki) = prctile(MG_env(idx_win), opt.AmpPercentile);
+    stim_win_valid(ki) = true;
+
+    % Require the muscle to actually SPASM in the window (env crosses its own
+    % spasm threshold), per channel. A spasm bout is flagged when EITHER TA or
+    % MG crosses threshold, so for a single-muscle bout the silent muscle would
+    % otherwise read ~0; the threshold gate excludes it from that channel.
+    if any(TA_env(idx_win) >= thr_spasm_TA)
+        stim_amp_TA(ki) = prctile(TA_env(idx_win), opt.AmpPercentile);
+    end
+    if any(MG_env(idx_win) >= thr_spasm_MG)
+        stim_amp_MG(ki) = prctile(MG_env(idx_win), opt.AmpPercentile);
+    end
     stim_off_s(ki)  = win_offset(k) / fs;
     stim_dur_s(ki)  = win_dur(k) / fs;
     stim_sp_idx(ki) = k;
@@ -215,8 +226,8 @@ for ni = 1:n_nostim
     template_MG = [];
 
     for ki = 1:n_stim
-        if isnan(stim_amp_TA(ki))
-            continue;   % this template was skipped
+        if ~stim_win_valid(ki)
+            continue;   % this template window was too short
         end
 
         off_smp = win_offset(stim_idx(ki));
@@ -240,17 +251,30 @@ for ni = 1:n_nostim
             continue;
         end
 
-        template_TA(end+1) = prctile(TA_env(idx_win), opt.AmpPercentile); %#ok<AGROW>
-        template_MG(end+1) = prctile(MG_env(idx_win), opt.AmpPercentile); %#ok<AGROW>
+        % Same spasm-threshold requirement as the stimulated windows: only
+        % count the window for a channel if that muscle actually spasms in it.
+        % This drops single-muscle bouts from the silent muscle's comparison,
+        % which is the source of the near-zero NoStim values.
+        if any(TA_env(idx_win) >= thr_spasm_TA)
+            template_TA(end+1) = prctile(TA_env(idx_win), opt.AmpPercentile); %#ok<AGROW>
+        end
+        if any(MG_env(idx_win) >= thr_spasm_MG)
+            template_MG(end+1) = prctile(MG_env(idx_win), opt.AmpPercentile); %#ok<AGROW>
+        end
     end
 
     if ~isempty(template_TA)
         nostim_amp_TA(ni) = mean(template_TA, 'omitnan');
+    end
+    if ~isempty(template_MG)
         nostim_amp_MG(ni) = mean(template_MG, 'omitnan');
-        fprintf('  NoStim spasm %d: %d template(s) fit  |  TA=%.4f  MG=%.4f\n', ...
-            k, numel(template_TA), nostim_amp_TA(ni), nostim_amp_MG(ni));
+    end
+
+    if ~isempty(template_TA) || ~isempty(template_MG)
+        fprintf('  NoStim spasm %d: %d TA / %d MG active template(s)  |  TA=%.4f  MG=%.4f\n', ...
+            k, numel(template_TA), numel(template_MG), nostim_amp_TA(ni), nostim_amp_MG(ni));
     else
-        fprintf('  NoStim spasm %d: no template window fits spasm length (%.3f s), skipped.\n', ...
+        fprintf('  NoStim spasm %d: no active template window fits spasm length (%.3f s), skipped.\n', ...
             k, sp_len/fs);
     end
 end

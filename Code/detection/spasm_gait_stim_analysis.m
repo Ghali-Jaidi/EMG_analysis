@@ -47,6 +47,17 @@ p.addParameter('TitleStr', 'Spasm / Active / Rest / Other / Stim analysis', @(x)
 p.parse(varargin{:});
 opt = p.Results;
 
+% snrValue carries the activity/rest masks this analysis is built on. Fail
+% early with a clear message if it is missing (e.g. a TT-only loaded file)
+% rather than erroring later on a dot-index into an empty value.
+if isempty(snrValue) || ~isstruct(snrValue) || ...
+        ~all(isfield(snrValue, {'is_act', 'is_act_MG'}))
+    error('spasm_gait_stim_analysis:missingSNR', ...
+        ['snrValue must be the struct returned by preprocess_and_label ' ...
+         '(with is_act / is_act_MG masks). It is empty or incomplete - ' ...
+         're-run preprocessing to regenerate it.']);
+end
+
 %% ================================================================
 %  1. EXTRACT SIGNALS
 %% ================================================================

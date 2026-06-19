@@ -18,9 +18,14 @@ arguments
     
 end
 
-if isempty(P) 
-   
+if isempty(P)
+    P = default_emg_parameters();
 end
+
+% Backfill any parameters missing from a (possibly stale) saved P struct.
+% Older params files predate newer fields (e.g. P.acq.valid), so merge in the
+% current defaults without overwriting values the caller has set.
+P = merge_defaults(P, default_emg_parameters());
 
 min_quiet_samples = round(P.min_quiet_dur_ms/1000 * fs);
 
@@ -381,5 +386,23 @@ end
 
 function s = ternary(cond, a, b)
 if cond, s = a; else, s = b; end
+end
+
+function P = merge_defaults(P, D)
+% Recursively fill fields present in defaults D but missing from P. Existing
+% values in P are preserved; nested structs are merged field by field.
+if ~isstruct(P)
+    P = D;
+    return;
+end
+fn = fieldnames(D);
+for i = 1:numel(fn)
+    f = fn{i};
+    if ~isfield(P, f)
+        P.(f) = D.(f);
+    elseif isstruct(D.(f)) && isstruct(P.(f))
+        P.(f) = merge_defaults(P.(f), D.(f));
+    end
+end
 end
 

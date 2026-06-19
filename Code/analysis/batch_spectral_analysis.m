@@ -48,7 +48,7 @@ for pair_idx = 1:n_pairs
         P = default_emg_parameters();
     end
     
-    [TT_gait, ~, ~] = preprocess_and_label(P, fs, 'fullFile', fullFile_gait, ...
+    [TT_gait, snr_gait, ~] = preprocess_and_label(P, fs, 'fullFile', fullFile_gait, ...
         'plot_figures', false, 'save_figures', false);
     
     % Load spasm
@@ -68,47 +68,64 @@ for pair_idx = 1:n_pairs
     [TT_spasm, ~, ~] = preprocess_and_label(P, fs, 'fullFile', fullFile_spasm, ...
         'plot_figures', false, 'save_figures', false);
     
-    % Select intervals
     duration_gait = numel(TT_gait.TA_rect) / fs;
     duration_spasm = numel(TT_spasm.TA_rect) / fs;
-    
+
     fprintf('  Gait: %.1f s, Spasm: %.1f s\n', duration_gait, duration_spasm);
-    
-    gait_intervals = select_signal_intervals(duration_gait, 'Gait');
+
+    % ---- Gait: deduce the gait bouts automatically from the preprocessing
+    % activity labels (snr_gait.is_act / is_act_MG). Each contiguous active
+    % run >= min_epoch_length becomes one burst epoch. No manual entry. ----
+    min_epoch_length = round(50 * fs / 1000);   % 50 ms minimum, as in plot_spectral_comparison_advanced
+    [gait_TA_segs, n_ta] = extract_burst_epochs(TT_gait.TA_raw, snr_gait.is_act,    min_epoch_length);
+    [gait_MG_segs, n_mg] = extract_burst_epochs(TT_gait.MG_raw, snr_gait.is_act_MG, min_epoch_length);
+    fprintf('  Gait bouts from labels  ->  TA: %d epochs   MG: %d epochs\n', n_ta, n_mg);
+
+    if n_ta == 0 || n_mg == 0
+        warning(['Pair %d: no gait bursts detected from activity labels ' ...
+            '(TA=%d, MG=%d). Skipping this pair.'], pair_idx, n_ta, n_mg);
+        continue;
+    end
+
+    % ---- Spasm: enter the spasm intervals manually ----
     spasm_intervals = select_signal_intervals(duration_spasm, 'Spasm');
-    
-    % Extract and compute
-    gait_TA_segs = extract_segments(TT_gait.TA_rect, fs, gait_intervals);
-    gait_MG_segs = extract_segments(TT_gait.MG_rect, fs, gait_intervals);
-    spasm_TA_segs = extract_segments(TT_spasm.TA_rect, fs, spasm_intervals);
-    spasm_MG_segs = extract_segments(TT_spasm.MG_rect, fs, spasm_intervals);
-    
+    if isempty(spasm_intervals)
+        warning('Pair %d: no Spasm interval entered. Skipping this pair.', pair_idx);
+        continue;
+    end
+
+    % Spasm segments from the raw signal over the entered intervals (raw is
+    % used for both conditions so the spectra are directly comparable).
+    spasm_TA_segs = extract_segments(TT_spasm.TA_raw, fs, spasm_intervals);
+    spasm_MG_segs = extract_segments(TT_spasm.MG_raw, fs, spasm_intervals);
+
     gait_TA = vertcat(gait_TA_segs{:});
     gait_MG = vertcat(gait_MG_segs{:});
     spasm_TA = vertcat(spasm_TA_segs{:});
     spasm_MG = vertcat(spasm_MG_segs{:});
     
-    % Compute spectra
-    [f, P_gait_TA] = compute_fft_spectrum(gait_TA, fs);
-    [~, P_gait_MG] = compute_fft_spectrum(gait_MG, fs);
-    [~, P_spasm_TA] = compute_fft_spectrum(spasm_TA, fs);
-    [~, P_spasm_MG] = compute_fft_spectrum(spasm_MG, fs);
-    
+    % Compute spectra. Each pooled signal has its OWN length, hence its own
+    % frequency axis — keep a separate f for each (do not reuse one f).
+    [f_gait_TA,  P_gait_TA]  = compute_fft_spectrum(gait_TA, fs);
+    [f_gait_MG,  P_gait_MG]  = compute_fft_spectrum(gait_MG, fs);
+    [f_spasm_TA, P_spasm_TA] = compute_fft_spectrum(spasm_TA, fs);
+    [f_spasm_MG, P_spasm_MG] = compute_fft_spectrum(spasm_MG, fs);
+
     % Extract key metrics
     [~, idx_ta_g] = max(P_gait_TA);
     [~, idx_ta_s] = max(P_spasm_TA);
     [~, idx_mg_g] = max(P_gait_MG);
     [~, idx_mg_s] = max(P_spasm_MG);
-    
-    peak_f_gait_ta = f(idx_ta_g);
-    peak_f_spasm_ta = f(idx_ta_s);
-    peak_f_gait_mg = f(idx_mg_g);
-    peak_f_spasm_mg = f(idx_mg_s);
-    
-    mean_freq_gait_ta = sum(f .* P_gait_TA) / sum(P_gait_TA);
-    mean_freq_spasm_ta = sum(f .* P_spasm_TA) / sum(P_spasm_TA);
-    mean_freq_gait_mg = sum(f .* P_gait_MG) / sum(P_gait_MG);
-    mean_freq_spasm_mg = sum(f .* P_spasm_MG) / sum(P_spasm_MG);
+
+    peak_f_gait_ta = f_gait_TA(idx_ta_g);
+    peak_f_spasm_ta = f_spasm_TA(idx_ta_s);
+    peak_f_gait_mg = f_gait_MG(idx_mg_g);
+    peak_f_spasm_mg = f_spasm_MG(idx_mg_s);
+
+    mean_freq_gait_ta  = sum(f_gait_TA  .* P_gait_TA)  / sum(P_gait_TA);
+    mean_freq_spasm_ta = sum(f_spasm_TA .* P_spasm_TA) / sum(P_spasm_TA);
+    mean_freq_gait_mg  = sum(f_gait_MG  .* P_gait_MG)  / sum(P_gait_MG);
+    mean_freq_spasm_mg = sum(f_spasm_MG .* P_spasm_MG) / sum(P_spasm_MG);
     
     % Store results
     results(pair_idx).pair = pair_idx;
@@ -171,27 +188,29 @@ end
 
 %% Helper functions (duplicated from compare_frequency_content)
 
-function intervals = select_signal_intervals(duration, ~)
+function intervals = select_signal_intervals(duration, label)
+if nargin < 2 || isempty(label), label = 'signal'; end
 intervals = [];
 count = 0;
 while true
     count = count + 1;
-    answer = inputdlg(sprintf(['Interval %d (duration: %.1f s):\n' ...
-        'Enter [start_sec end_sec] or Cancel to finish'], count, duration), ...
-        'Select Interval', [1 50], {sprintf('0 %.1f', min(5, duration))});
-    
+    answer = inputdlg(sprintf(['%s interval %d (duration: %.1f s):\n' ...
+        'Enter [start_sec end_sec], or Cancel to finish'], label, count, duration), ...
+        sprintf('Select %s Interval', label), [1 50], {sprintf('0 %.1f', min(5, duration))});
+
     if isempty(answer)
-        if count == 1, error('At least one interval required.'); end
+        % Cancel: finish adding intervals. Returning empty is allowed; the
+        % caller skips the pair rather than aborting the whole batch.
         break;
     end
-    
+
     try
-        vals = str2num(answer{1});
+        vals = str2num(answer{1}); %#ok<ST2NM>
         if numel(vals) ~= 2, error('Need 2 values'); end
         t_start = vals(1); t_end = vals(2);
         if t_start < 0 || t_end > duration || t_start >= t_end, error('Invalid range'); end
-        intervals = [intervals; t_start, t_end];
-        fprintf('  ✓ Interval %d: %.2f - %.2f s\n', count, t_start, t_end);
+        intervals = [intervals; t_start, t_end]; %#ok<AGROW>
+        fprintf('  ✓ %s interval %d: %.2f - %.2f s\n', label, count, t_start, t_end);
     catch
         msgbox('Invalid input', 'Error', 'modal');
         count = count - 1;
@@ -220,5 +239,7 @@ X = fft(signal);
 P2 = abs(X) / N;
 P = P2(1:floor(N/2)+1);
 P(2:end-1) = 2 * P(2:end-1);
-f = fs * (0:length(P)-1) / N;
+% Return f as a column (P is a column too). If f were a row, "f .* P" would
+% broadcast into an N x N matrix in the mean-frequency calculation.
+f = (fs * (0:length(P)-1) / N).';
 end

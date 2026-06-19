@@ -176,8 +176,10 @@ if run_group_compare
             peakMask = true(N,1);
         end
 
-        R(k).pnrTA = peak_to_noise_masked_peak(TTk.TA_env, snrk.is_rest,    peakMask, 100);
-        R(k).pnrMG = peak_to_noise_masked_peak(TTk.MG_env, snrk.is_rest_MG, peakMask, 100);
+        % Use the 99th-percentile envelope as the "peak" (robust to single
+        % artifact spikes) instead of the absolute max (peakPrct = 100).
+        R(k).pnrTA = peak_to_noise_masked_peak(TTk.TA_env, snrk.is_rest,    peakMask, 99);
+        R(k).pnrMG = peak_to_noise_masked_peak(TTk.MG_env, snrk.is_rest_MG, peakMask, 99);
 
         actTA = snrk.is_act(:);
         actMG = snrk.is_act_MG(:);

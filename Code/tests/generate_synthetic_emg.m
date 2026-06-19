@@ -44,7 +44,8 @@ function S = generate_synthetic_emg(varargin)
 %   'Ch3OffDurS'          : duration of Ch3 OFF between pulses in seconds (default 5)
 %   'Ch3Amplitude'        : Ch3 signal amplitude when ON (default 5)
 %   'Ch3InhibitFrac'      : event-drive reduction during Ch3 ON (default 0.35)
-%   'SavePath'            : if provided, saves the .mat file to this path
+%   'SavePath'            : path to save the .mat file (default 'synthetic_rec.mat';
+%                           pass '' to skip saving)
 %   'PlotResult'          : whether to plot the generated signal (default true)
 %   'Seed'                : random seed for reproducibility (default 42)
 
@@ -83,7 +84,7 @@ p.addParameter('Ch3OffDurS',          5,     @isnumeric);
 p.addParameter('Ch3Amplitude',        5,     @isnumeric);
 p.addParameter('Ch3InhibitFrac',      0.6,   @isnumeric);
 
-p.addParameter('SavePath',            '',    @ischar);
+p.addParameter('SavePath',            'synthetic_rec.mat', @ischar);
 p.addParameter('PlotResult',          true, @islogical);
 p.addParameter('Seed',                29,    @isnumeric);
 p.addParameter('ExtraSpasm',          true, @islogical);

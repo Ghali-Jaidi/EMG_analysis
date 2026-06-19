@@ -63,8 +63,8 @@ P.artifact.frac_thresh   = 0.2;   % fraction of dilation window that must be fla
 %  SPASM / STIM ANALYSIS  (used by spasm_gait_stim_analysis.m)
 %  Thresholds for spasm classification and Ch3 stimulation ON/OFF split.
 %% =====================================================================
-P.spasm.prc_TA            = 65;   % percentile on active TA envelope for spasm threshold
-P.spasm.prc_MG            = 65;   % percentile on active MG envelope for spasm threshold
+P.spasm.prc_TA            = 70;   % percentile on active TA envelope for spasm threshold
+P.spasm.prc_MG            = 70;   % percentile on active MG envelope for spasm threshold
 P.spasm.min_dur_s         = 0.1;  % minimum spasm event duration (s)
 P.spasm.fuse_gap_ms       = 50;   % gap (ms) below which adjacent spasm bursts are merged
 P.spasm.gait_min_overlap_s = 0.05;% kept for compatibility, unused in current active definition
